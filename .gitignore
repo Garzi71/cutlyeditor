@@ -1,0 +1,8 @@
+node_modules/
+out/
+dist/
+release/
+*.log
+
+# FFmpeg binaries are downloaded during the build, not stored in git
+resources/ffmpeg/
