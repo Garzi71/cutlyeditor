@@ -31,6 +31,18 @@ Potřebuješ mít nainstalované **Node.js** a **FFmpeg** (příkazy `ffmpeg` a 
 - Export do MP4 (H.264 nebo H.265) přes **GPU NVIDIA (NVENC)** nebo CPU, s ukazatelem průběhu
 - Ukládání a otevírání projektů (`.cutly`), seznam posledních projektů
 
+## Text a titulky (fáze 2)
+
+- Záložka **Text**: tlačítko *Add text* a 10 předvoleb stylů (obrys, box, neon…)
+- 10 přibalených fontů s češtinou (Montserrat, Poppins, Inter, Bebas Neue…) + všechny fonty nainstalované ve Windows
+- Úprava textu: font, tloušťka, velikost, barva, obrys, pozadí, stín, zarovnání, velká písmena, šířka řádku
+- **Automatické titulky** (Whisper large-v3-turbo, běží offline na tvém PC):
+  - styl *Word by word* (2–3 slova, zvýraznění právě vysloveného slova) nebo *Classic* (věty dole)
+  - jazyk automaticky nebo ručně (čeština, slovenština, angličtina…)
+  - při prvním použití se stáhne asi 583 MB (s NVIDIA zrychlením navíc 685 MB), pak to funguje bez internetu
+  - *Apply this style to all captions* nastaví stejný vzhled všem titulkům najednou
+- Text i titulky se exportují přesně tak, jak vypadají v náhledu
+
 ## Klávesové zkratky
 
 | Akce | Zkratka |

@@ -4,6 +4,7 @@ import type { Clip, MediaItem, Project } from '@shared/types'
 import { clipEnd, fitSize, projectDuration } from '@shared/types'
 import { useEditor } from '../store'
 import { mediaUrl } from '../lib/util'
+import { drawTextClip } from './text'
 
 interface ClipSource {
   el: HTMLVideoElement | HTMLAudioElement
@@ -201,6 +202,10 @@ class Player {
     for (const track of videoTracks) {
       for (const c of p.clips) {
         if (c.trackId !== track.id || t < c.start || t >= clipEnd(c)) continue
+        if (c.text) {
+          drawTextClip(ctx, c, c.in + (t - c.start), p.width, p.height, 1)
+          continue
+        }
         const m = this.mediaOf(p, c)
         if (!m || m.kind === 'audio') continue
         let src: CanvasImageSource | null = null

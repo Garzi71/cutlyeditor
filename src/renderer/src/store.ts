@@ -2,7 +2,7 @@
 // Every change to the project goes through `commit`, which records undo history.
 import { create } from 'zustand'
 import { produce, type Draft } from 'immer'
-import type { Clip, MediaAssets, MediaItem, Project, Track, TrackKind } from '@shared/types'
+import type { Clip, MediaAssets, MediaItem, Project, TextData, TextStyle, Track, TrackKind } from '@shared/types'
 import { clipEnd } from '@shared/types'
 import { uid } from './lib/util'
 
@@ -348,6 +348,100 @@ export function addClip(mediaId: string, opts: { start?: number; trackId?: strin
     })
   })
   set({ selection: [id] })
+}
+
+// ---------------- text ----------------
+
+export const TEXT_DEFAULT_DURATION = 3
+
+/** Find a video track (not the main one) that only holds text and has room, or create one on top. */
+function textTrackFor(d: Draft<Project>, start: number, end: number): Track {
+  const main = mainTrack(d, 'video')
+  const candidates = d.tracks.filter(
+    (t) =>
+      t.kind === 'video' &&
+      t.id !== main?.id &&
+      !t.locked &&
+      d.clips.filter((c) => c.trackId === t.id).every((c) => !!c.text)
+  ) as Track[]
+  return (
+    candidates.find((t) => !overlaps(d.clips as Clip[], t.id, start, end)) ?? insertTrack(d, 'video')
+  )
+}
+
+export function addTextClip(data: TextData, opts: { start?: number; duration?: number; y?: number } = {}): void {
+  const { project, playhead } = get()
+  if (!project) return
+  const start = Math.max(0, opts.start ?? playhead)
+  const dur = opts.duration ?? TEXT_DEFAULT_DURATION
+  const id = uid()
+  commit((d) => {
+    const track = textTrackFor(d, start, start + dur)
+    d.clips.push({
+      id,
+      trackId: track.id,
+      mediaId: '',
+      text: JSON.parse(JSON.stringify(data)),
+      start,
+      in: 0,
+      out: dur,
+      volume: 1,
+      transform: { ...defaultTransform(), y: opts.y ?? 0 }
+    })
+  })
+  set({ selection: [id] })
+}
+
+export interface CaptionChunk {
+  start: number // timeline seconds
+  end: number
+  words: { text: string; start: number; end: number }[] // timeline seconds
+}
+
+/** Put generated captions on a new track on top. One undo step. */
+export function addCaptions(chunks: CaptionChunk[], style: TextStyle, y: number): void {
+  if (!chunks.length) return
+  commit((d) => {
+    const track = insertTrack(d, 'video')
+    for (const ch of chunks) {
+      const dur = Math.max(0.1, ch.end - ch.start)
+      d.clips.push({
+        id: uid(),
+        trackId: track.id,
+        mediaId: '',
+        text: {
+          content: ch.words.map((w) => w.text).join(' '),
+          style: { ...style },
+          caption: true,
+          // stored in clip time (clip.in = 0 at clip.start)
+          words: ch.words.map((w) => ({ text: w.text, start: w.start - ch.start, end: w.end - ch.start }))
+        },
+        start: ch.start,
+        in: 0,
+        out: dur,
+        volume: 1,
+        transform: { ...defaultTransform(), y }
+      })
+    }
+  })
+  set({ selection: [] })
+}
+
+/** Copy the style and position of one text clip to all other text clips on the same track. */
+export function applyTextStyleToTrack(clipId: string): number {
+  const p = get().project
+  const src = p?.clips.find((c) => c.id === clipId)
+  if (!src?.text) return 0
+  let n = 0
+  commit((d) => {
+    for (const c of d.clips) {
+      if (c.id === src.id || c.trackId !== src.trackId || !c.text) continue
+      c.text.style = { ...src.text!.style }
+      c.transform = { ...src.transform }
+      n++
+    }
+  })
+  return n
 }
 
 export function updateClip(id: string, recipe: (c: Draft<Clip>) => void, key?: string): void {

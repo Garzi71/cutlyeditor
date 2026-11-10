@@ -3,12 +3,66 @@ import { ChildProcess, spawn } from 'child_process'
 import { promises as fs } from 'fs'
 import os from 'os'
 import path from 'path'
-import type { Clip, ExportProgress, ExportSettings, MediaItem, Project } from '../shared/types'
+import type { Clip, ExportProgress, ExportSettings, MediaItem, Project, TextLayer } from '../shared/types'
 import { clipDuration, clipEnd, fitSize, projectDuration } from '../shared/types'
-import { FFMPEG } from './ffmpeg'
+import { FFMPEG, run } from './ffmpeg'
 
 const even = (n: number): number => Math.max(2, Math.round(n / 2) * 2)
 const f3 = (n: number): string => n.toFixed(3)
+
+/** Collects ffmpeg inputs; one input per clip (trimmed with -ss / -t). */
+class Inputs {
+  args: string[] = []
+  private byClip = new Map<string, number>()
+  private count = 0
+
+  constructor(private fps: number) {}
+
+  forClip(clip: Clip, m: MediaItem): number {
+    const existing = this.byClip.get(clip.id)
+    if (existing !== undefined) return existing
+    const dur = f3(clipDuration(clip))
+    if (m.kind === 'image') this.args.push('-loop', '1', '-framerate', String(this.fps), '-t', dur, '-i', m.path)
+    else this.args.push('-ss', f3(clip.in), '-t', dur, '-i', m.path)
+    const idx = this.count++
+    this.byClip.set(clip.id, idx)
+    return idx
+  }
+
+  raw(...args: string[]): number {
+    this.args.push(...args)
+    return this.count++
+  }
+}
+
+/** Mix every clip with sound on a non-muted track into [aout]. */
+function audioMix(project: Project, total: number, inputs: Inputs, filters: string[], rate = 48000): void {
+  const media = new Map(project.media.map((m) => [m.id, m]))
+  const labels: string[] = []
+  for (const track of project.tracks) {
+    if (track.muted) continue
+    for (const clip of project.clips.filter((c) => c.trackId === track.id)) {
+      const m = media.get(clip.mediaId)
+      if (!m || clip.text || clip.volume <= 0) continue
+      if (!(m.kind === 'audio' || (m.kind === 'video' && m.hasAudio))) continue
+      const idx = inputs.forClip(clip, m)
+      const label = `a${labels.length}`
+      filters.push(
+        `[${idx}:a]asetpts=PTS-STARTPTS,aformat=sample_rates=${rate}:channel_layouts=stereo,volume=${clip.volume.toFixed(3)},adelay=${Math.round(clip.start * 1000)}:all=1[${label}]`
+      )
+      labels.push(label)
+    }
+  }
+  if (labels.length === 0) {
+    filters.push(`anullsrc=r=${rate}:cl=stereo,atrim=end=${f3(total)}[aout]`)
+    return
+  }
+  const mix =
+    labels.length === 1
+      ? `[${labels[0]}]anull`
+      : `${labels.map((l) => `[${l}]`).join('')}amix=inputs=${labels.length}:normalize=0:dropout_transition=0`
+  filters.push(`${mix},apad,atrim=end=${f3(total)}[aout]`)
+}
 
 interface Built {
   args: string[]
@@ -16,7 +70,7 @@ interface Built {
   total: number
 }
 
-export function buildExport(project: Project, s: ExportSettings): Built {
+export function buildExport(project: Project, s: ExportSettings, textLists: Map<string, string>): Built {
   const total = projectDuration(project)
   if (total <= 0) throw new Error('The timeline is empty.')
 
@@ -24,24 +78,8 @@ export function buildExport(project: Project, s: ExportSettings): Built {
   const H = even(s.height)
   const k = W / project.width // project pixels -> export pixels
   const media = new Map<string, MediaItem>(project.media.map((m) => [m.id, m]))
-
-  const inputs: string[] = []
+  const inputs = new Inputs(s.fps)
   const filters: string[] = []
-  const inputIndex = new Map<string, number>() // clip id -> ffmpeg input index
-
-  const addInput = (clip: Clip, m: MediaItem): number => {
-    const existing = inputIndex.get(clip.id)
-    if (existing !== undefined) return existing
-    const dur = f3(clipDuration(clip))
-    if (m.kind === 'image') {
-      inputs.push('-loop', '1', '-framerate', String(s.fps), '-t', dur, '-i', m.path)
-    } else {
-      inputs.push('-ss', f3(clip.in), '-t', dur, '-i', m.path)
-    }
-    const idx = inputIndex.size
-    inputIndex.set(clip.id, idx)
-    return idx
-  }
 
   // ---- video: draw bottom track first, top track last ----
   filters.push(`color=c=${project.background}:s=${W}x${H}:r=${s.fps}:d=${f3(total)}[base]`)
@@ -52,8 +90,8 @@ export function buildExport(project: Project, s: ExportSettings): Built {
     const clips = project.clips.filter((c) => c.trackId === track.id).sort((a, b) => a.start - b.start)
     for (const clip of clips) {
       const m = media.get(clip.mediaId)
-      if (!m || m.kind === 'audio') continue
-      const idx = addInput(clip, m)
+      if (!m || clip.text || m.kind === 'audio') continue
+      const idx = inputs.forClip(clip, m)
       const tr = clip.transform
       const fit = fitSize(m.width, m.height, project.width, project.height)
       const w = even(fit.w * tr.scale * k)
@@ -75,35 +113,19 @@ export function buildExport(project: Project, s: ExportSettings): Built {
       current = `o${n}`
       n++
     }
+    // Text on this track: a pre-rendered sequence of transparent full-frame PNGs.
+    const list = textLists.get(track.id)
+    if (list) {
+      const idx = inputs.raw('-f', 'concat', '-safe', '0', '-i', list)
+      filters.push(`[${idx}:v]scale=${W}:${H},format=rgba,setpts=PTS-STARTPTS[t${n}]`)
+      filters.push(`[${current}][t${n}]overlay=0:0:eof_action=pass[o${n}]`)
+      current = `o${n}`
+      n++
+    }
   }
   filters.push(`[${current}]format=yuv420p[vout]`)
 
-  // ---- audio: every clip with sound on a non-muted track ----
-  const audioLabels: string[] = []
-  for (const track of project.tracks) {
-    if (track.muted) continue
-    for (const clip of project.clips.filter((c) => c.trackId === track.id)) {
-      const m = media.get(clip.mediaId)
-      if (!m || clip.volume <= 0) continue
-      if (!(m.kind === 'audio' || (m.kind === 'video' && m.hasAudio))) continue
-      const idx = addInput(clip, m)
-      const ms = Math.round(clip.start * 1000)
-      const label = `a${audioLabels.length}`
-      filters.push(
-        `[${idx}:a]asetpts=PTS-STARTPTS,aformat=sample_rates=48000:channel_layouts=stereo,volume=${clip.volume.toFixed(3)},adelay=${ms}:all=1[${label}]`
-      )
-      audioLabels.push(label)
-    }
-  }
-  if (audioLabels.length === 0) {
-    filters.push(`anullsrc=r=48000:cl=stereo,atrim=end=${f3(total)}[aout]`)
-  } else {
-    const mix =
-      audioLabels.length === 1
-        ? `[${audioLabels[0]}]anull`
-        : `${audioLabels.map((l) => `[${l}]`).join('')}amix=inputs=${audioLabels.length}:normalize=0:dropout_transition=0`
-    filters.push(`${mix},apad,atrim=end=${f3(total)}[aout]`)
-  }
+  audioMix(project, total, inputs, filters)
 
   // ---- encoder ----
   const q = { high: 0, medium: 1, low: 2 }[s.quality]
@@ -120,7 +142,7 @@ export function buildExport(project: Project, s: ExportSettings): Built {
 
   const args = [
     '-hide_banner', '-y', '-nostats', '-progress', 'pipe:1',
-    ...inputs,
+    ...inputs.args,
     '-/filter_complex', '__FILTER__',
     '-map', '[vout]', '-map', '[aout]',
     ...enc,
@@ -132,6 +154,41 @@ export function buildExport(project: Project, s: ExportSettings): Built {
   return { args, filter: filters.join(';\n'), total }
 }
 
+/** Writes an ffconcat playlist that shows each PNG for its duration. */
+async function writeConcatList(layer: TextLayer, dir: string): Promise<string> {
+  const q = (p: string): string => `'${p.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`
+  const lines = ['ffconcat version 1.0']
+  for (const seg of layer.segments) lines.push(`file ${q(seg.png)}`, `duration ${seg.duration.toFixed(4)}`)
+  // The last entry must be repeated, otherwise its duration is ignored.
+  const last = layer.segments[layer.segments.length - 1]
+  if (last) lines.push(`file ${q(last.png)}`)
+  const file = path.join(dir, `text-${layer.trackId}.ffconcat`)
+  await fs.writeFile(file, lines.join('\n'))
+  return file
+}
+
+// ---------- temporary files for text frames ----------
+
+let tempDir: string | null = null
+
+export async function newTempDir(): Promise<string> {
+  if (tempDir) await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {})
+  tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cutly-export-'))
+  return tempDir
+}
+
+export async function writeTempFile(name: string, data: Uint8Array): Promise<string> {
+  if (!tempDir) await newTempDir()
+  const file = path.join(tempDir!, path.basename(name))
+  await fs.writeFile(file, data)
+  return file
+}
+
+async function cleanTemp(): Promise<void> {
+  if (tempDir) await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {})
+  tempDir = null
+}
+
 let running: { proc: ChildProcess; output: string; cancelled: boolean } | null = null
 
 export async function startExport(
@@ -140,9 +197,12 @@ export async function startExport(
   onProgress: (p: ExportProgress) => void
 ): Promise<void> {
   if (running) throw new Error('An export is already running.')
-  const built = buildExport(project, settings)
+  const dir = tempDir ?? (await newTempDir())
+  const textLists = new Map<string, string>()
+  for (const layer of settings.textLayers ?? []) textLists.set(layer.trackId, await writeConcatList(layer, dir))
+  const built = buildExport(project, settings, textLists)
   // The filter graph goes into a file: long timelines would exceed the Windows command-line limit.
-  const filterFile = path.join(os.tmpdir(), `cutly-filter-${Date.now()}.txt`)
+  const filterFile = path.join(dir, 'filter.txt')
   await fs.writeFile(filterFile, built.filter)
   const args = built.args.map((a) => (a === '__FILTER__' ? filterFile : a))
 
@@ -177,7 +237,7 @@ export async function startExport(
 
   proc.on('close', async (code) => {
     running = null
-    fs.unlink(filterFile).catch(() => {})
+    await cleanTemp()
     if (state.cancelled) {
       fs.unlink(settings.outputPath).catch(() => {})
       onProgress({ percent: 0, cancelled: true })
@@ -198,4 +258,21 @@ export function cancelExport(): void {
   if (!running) return
   running.cancelled = true
   running.proc.kill()
+}
+
+/** Render the timeline's audio mix to a 16 kHz mono WAV (input for speech recognition). */
+export async function renderAudioMix(project: Project, outWav: string): Promise<void> {
+  const total = projectDuration(project)
+  if (total <= 0) throw new Error('The timeline is empty.')
+  const inputs = new Inputs(30)
+  const filters: string[] = []
+  audioMix(project, total, inputs, filters)
+  const filterFile = `${outWav}.filter.txt`
+  await fs.writeFile(filterFile, filters.join(';\n'))
+  const res = await run(FFMPEG, [
+    '-hide_banner', '-v', 'error', '-y', ...inputs.args,
+    '-/filter_complex', filterFile, '-map', '[aout]', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', outWav
+  ])
+  fs.unlink(filterFile).catch(() => {})
+  if (res.code !== 0) throw new Error(res.stderr.trim().split('\n').slice(-3).join('\n') || 'Audio extraction failed')
 }

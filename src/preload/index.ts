@@ -1,7 +1,8 @@
 // Safe bridge between the UI (renderer) and the main process.
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type {
-  ExportProgress, ExportSettings, MediaItem, MediaKind, Project, RecentProject, SystemInfo, UpdateStatus
+  ExportProgress, ExportSettings, MediaItem, MediaKind, Project, RecentProject, SystemInfo, TranscribeOptions,
+  UpdateStatus, WhisperProgress, WhisperStatus, Word
 } from '../shared/types'
 
 const api = {
@@ -33,6 +34,20 @@ const api = {
     return () => ipcRenderer.removeListener('app:close-request', listener)
   },
   confirmClose: (): Promise<void> => ipcRenderer.invoke('app:confirm-close'),
+  // ---- export text frames ----
+  newExportTemp: (): Promise<string> => ipcRenderer.invoke('export:newTemp'),
+  writeExportTemp: (name: string, data: Uint8Array): Promise<string> => ipcRenderer.invoke('export:writeTemp', name, data),
+  // ---- speech to text ----
+  whisperStatus: (): Promise<WhisperStatus> => ipcRenderer.invoke('whisper:status'),
+  whisperDownload: (gpu: boolean): Promise<void> => ipcRenderer.invoke('whisper:download', gpu),
+  whisperTranscribe: (project: Project, opts: TranscribeOptions): Promise<Word[]> =>
+    ipcRenderer.invoke('whisper:transcribe', project, opts),
+  whisperCancel: (): Promise<void> => ipcRenderer.invoke('whisper:cancel'),
+  onWhisperProgress: (cb: (p: WhisperProgress) => void): (() => void) => {
+    const listener = (_: unknown, p: WhisperProgress): void => cb(p)
+    ipcRenderer.on('whisper:progress', listener)
+    return () => ipcRenderer.removeListener('whisper:progress', listener)
+  },
   // ---- updates ----
   updateStatus: (): Promise<UpdateStatus> => ipcRenderer.invoke('update:status'),
   checkForUpdates: (): Promise<void> => ipcRenderer.invoke('update:check'),

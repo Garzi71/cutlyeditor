@@ -1,11 +1,12 @@
 // Electron main process: creates the window, serves local media files to the UI
 // and handles everything that needs disk / ffmpeg access.
-import { app, BrowserWindow, dialog, ipcMain, protocol, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, protocol, session, shell } from 'electron'
 import { createReadStream, promises as fs } from 'fs'
 import path from 'path'
 import { Readable } from 'stream'
-import type { ExportSettings, Project, RecentProject } from '../shared/types'
-import { cancelExport, startExport } from './exporter'
+import type { ExportSettings, Project, RecentProject, TranscribeOptions } from '../shared/types'
+import { cancelExport, newTempDir, startExport, writeTempFile } from './exporter'
+import { whisperCancel, whisperDownload, whisperStatus, whisperTranscribe } from './whisper'
 import { makePeaks, makeThumbnails, probe, systemInfo } from './ffmpeg'
 import { initUpdater, installingUpdate } from './updater'
 
@@ -190,11 +191,29 @@ function registerIpc(): void {
   ipcMain.handle('export:cancel', () => cancelExport())
 
   ipcMain.handle('shell:showItem', (_e, p: string) => shell.showItemInFolder(p))
+
+  // ---- text frames for export ----
+  ipcMain.handle('export:newTemp', () => newTempDir())
+  ipcMain.handle('export:writeTemp', (_e, name: string, data: Uint8Array) => writeTempFile(name, data))
+
+  // ---- speech to text ----
+  ipcMain.handle('whisper:status', () => whisperStatus())
+  ipcMain.handle('whisper:download', (e, gpu: boolean) =>
+    whisperDownload(gpu, (p) => !e.sender.isDestroyed() && e.sender.send('whisper:progress', p))
+  )
+  ipcMain.handle('whisper:transcribe', (e, project: Project, opts: TranscribeOptions) =>
+    whisperTranscribe(project, opts, (p) => !e.sender.isDestroyed() && e.sender.send('whisper:progress', p))
+  )
+  ipcMain.handle('whisper:cancel', () => whisperCancel())
 }
 
 app.whenReady().then(() => {
   registerMediaProtocol()
   registerIpc()
+  // Let the UI list fonts installed in Windows (for the text font picker). Nothing else is granted.
+  const allowed = new Set(['local-fonts', 'clipboard-sanitized-write', 'fullscreen'])
+  session.defaultSession.setPermissionCheckHandler((_wc, permission) => allowed.has(permission))
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => cb(allowed.has(permission)))
   createWindow()
   initUpdater(win!)
   systemInfo() // warm up the GPU check in the background

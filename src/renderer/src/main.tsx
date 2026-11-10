@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import App from './App'
 import * as store from './store'
 import { player } from './engine/player'
+import './lib/fonts'
 import './styles.css'
 
 // In development, expose the editor state for debugging from the DevTools console.

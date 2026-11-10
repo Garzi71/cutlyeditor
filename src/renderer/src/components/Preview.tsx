@@ -5,6 +5,7 @@ import { clipEnd, fitSize, projectDuration } from '@shared/types'
 import { player } from '../engine/player'
 import { isClipLocked, updateClip, useEditor } from '../store'
 import { aspectIdOf, formatTimecode } from '../lib/util'
+import { measureTextClip } from '../engine/text'
 
 export default function Preview(): React.JSX.Element {
   const project = useEditor((s) => s.project)!
@@ -89,11 +90,13 @@ function SelectionOverlay({ scale }: { scale: number }): React.JSX.Element | nul
   if (!clip || playhead < clip.start || playhead >= clipEnd(clip)) return null
   const m = project.media.find((x) => x.id === clip.mediaId)
   const track = project.tracks.find((t) => t.id === clip.trackId)
-  if (!m || m.kind === 'audio' || track?.hidden) return null
+  if ((!m && !clip.text) || m?.kind === 'audio' || track?.hidden) return null
   const locked = isClipLocked(project, clip)
 
   const tr = clip.transform
-  const fit = fitSize(m.width, m.height, project.width, project.height)
+  const fit = clip.text
+    ? measureTextClip(clip.text, project.width)
+    : fitSize(m!.width, m!.height, project.width, project.height)
   const w = fit.w * tr.scale * scale
   const h = fit.h * tr.scale * scale
   const cx = (project.width / 2 + tr.x) * scale

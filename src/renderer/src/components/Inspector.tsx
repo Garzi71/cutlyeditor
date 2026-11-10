@@ -6,6 +6,7 @@ import { clipDuration } from '@shared/types'
 import { commit, defaultTransform, updateClip, useEditor } from '../store'
 import { ASPECTS, RESOLUTIONS, aspectIdOf, formatBytes, formatTimecode, frameSize } from '../lib/util'
 import { NumberField, SliderField } from './Controls'
+import TextInspector from './TextInspector'
 
 export default function Inspector(): React.JSX.Element {
   const project = useEditor((s) => s.project)!
@@ -15,7 +16,9 @@ export default function Inspector(): React.JSX.Element {
 
   return (
     <div className="panel">
-      {clip && media ? (
+      {clip?.text ? (
+        <TextInspector key={clip.id} clip={clip} />
+      ) : clip && media ? (
         <ClipInspector key={clip.id} project={project} clip={clip} media={media} />
       ) : selection.length > 1 ? (
         <>

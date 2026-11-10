@@ -7,6 +7,7 @@ import { player } from '../engine/player'
 import { useEditor } from '../store'
 import { RESOLUTIONS, formatShort } from '../lib/util'
 import { Segmented } from './Controls'
+import { renderTextLayers } from '../engine/exportText'
 
 type Phase = 'setup' | 'running' | 'done' | 'error'
 
@@ -57,12 +58,18 @@ export default function ExportDialog(): React.JSX.Element {
     setPhase('running')
     setProgress({ percent: 0 })
     try {
-      await window.api.startExport(project, { outputPath: out, width, height, fps, codec, quality, useGpu })
+      const hasText = project.clips.some((c) => c.text)
+      if (hasText) setPreparing(0)
+      const textLayers = await renderTextLayers(project, width, height, (f) => setPreparing(f))
+      setPreparing(null)
+      await window.api.startExport(project, { outputPath: out, width, height, fps, codec, quality, useGpu, textLayers })
     } catch (e) {
+      setPreparing(null)
       setPhase('error')
       setProgress({ percent: 0, error: (e as Error).message })
     }
   }
+  const [preparing, setPreparing] = useState<number | null>(null)
 
   const resOptions = [...new Set([...RESOLUTIONS.filter((r) => r <= Math.max(short, 1080) * 2), short])].sort((a, b) => a - b)
 
@@ -159,9 +166,11 @@ export default function ExportDialog(): React.JSX.Element {
         {phase === 'running' && (
           <>
             <div className="modal-body">
-              <div>Exporting {output?.split(/[\\/]/).pop()}…</div>
+              <div>
+                {preparing !== null ? 'Preparing text and captions…' : `Exporting ${output?.split(/[\\/]/).pop()}…`}
+              </div>
               <div className="progress">
-                <div style={{ width: `${progress.percent}%` }} />
+                <div style={{ width: `${preparing !== null ? preparing * 100 : progress.percent}%` }} />
               </div>
               <div className="export-stats">
                 <span>{progress.percent.toFixed(1)} %</span>
