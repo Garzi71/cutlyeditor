@@ -34,7 +34,16 @@ jobs:
       - name: Build app
         run: npm run build
 
-      - name: Build installer and publish release
-        run: npx electron-builder --win --publish always
+      - name: Build installer
+        run: npx electron-builder --win --publish never
+
+      # One single step creates the release and uploads everything, so there can never be
+      # duplicate releases. latest.yml is what installed apps read to find updates.
+      - name: Publish GitHub release
+        shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = '${{ github.ref_name }}'
+          $files = Get-ChildItem release -File | Where-Object { ($_.Name -like 'Cutly-Setup-*.exe' -and $_.Name -notlike '*uninstaller*') -or $_.Name -like '*.blockmap' -or $_.Name -eq 'latest.yml' } | ForEach-Object { $_.FullName }
+          gh release create $tag @files --title "Cutly $($tag.TrimStart('v'))" --generate-notes --latest
