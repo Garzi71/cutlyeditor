@@ -39,6 +39,7 @@ export default function Timeline(): React.JSX.Element {
   const snapping = useEditor((s) => s.snapping)
   const selection = useEditor((s) => s.selection)
   const transitionSel = useEditor((s) => s.transitionSel)
+  const silencePreview = useEditor((s) => s.silencePreview)
   const assets = useEditor((s) => s.assets)
   const canUndo = useEditor((s) => s.past.length > 0)
   const canRedo = useEditor((s) => s.future.length > 0)
@@ -428,6 +429,7 @@ export default function Timeline(): React.JSX.Element {
                       visEnd={visEnd}
                       locked={t.locked}
                       onDragStart={beginClipDrag}
+                      silence={silencePreview?.clipId === c.id ? silencePreview.ranges : undefined}
                     />
                   )
                 })}
@@ -601,6 +603,7 @@ const ClipView = memo(function ClipView(props: {
   visStart: number
   visEnd: number
   onDragStart: (e: React.PointerEvent, id: string, mode: DragMode) => void
+  silence?: [number, number][]
 }): React.JSX.Element {
   const { clip: c, media: m, assets, pps, height, track } = props
   const left = c.start * pps
@@ -636,6 +639,9 @@ const ClipView = memo(function ClipView(props: {
           <VolumeX size={12} />
         </div>
       )}
+      {props.silence?.map(([a, b], i) => (
+        <div key={'s' + i} className="clip-silence" style={{ left: (a - c.start) * pps, width: Math.max(1, (b - a) * pps) }} />
+      ))}
       {props.selected && c.keyframes && (
         <div className="clip-kfs">
           {[...new Set(Object.values(c.keyframes).flatMap((list) => (list ?? []).map((k) => Math.round(k.t * 100) / 100)))].map((t) => (

@@ -30,6 +30,8 @@ interface EditorState {
   selection: string[]
   /** Clip id whose incoming transition is selected (shown in the inspector). */
   transitionSel: string | null
+  /** Silent parts found in a clip, shown on the timeline before cutting (timeline seconds). */
+  silencePreview: { clipId: string; ranges: [number, number][] } | null
   playhead: number
   playing: boolean
   pxPerSec: number
@@ -50,6 +52,7 @@ export const useEditor = create<EditorState>(() => ({
   assets: {},
   selection: [],
   transitionSel: null,
+  silencePreview: null,
   playhead: 0,
   playing: false,
   pxPerSec: 60,
@@ -749,3 +752,61 @@ export function selectTransition(clipId: string | null): void {
 useEditor.subscribe((s, prev) => {
   if (s.selection !== prev.selection && s.selection.length && s.transitionSel) set({ transitionSel: null })
 })
+
+/**
+ * Remove parts of a clip (timeline ranges inside it). What is left is joined together and every later
+ * clip on the same track moves left by the removed time. One undo step.
+ */
+export function cutRanges(clipId: string, ranges: [number, number][]): number {
+  const p = get().project
+  const orig = p?.clips.find((c) => c.id === clipId)
+  if (!p || !orig) return 0
+  const D = clipDuration(orig)
+  const cuts = ranges
+    .map(([a, b]) => [Math.max(0, a - orig.start), Math.min(D, b - orig.start)] as [number, number])
+    .filter(([a, b]) => b - a > 0.02)
+    .sort((x, y) => x[0] - y[0])
+  if (!cuts.length) return 0
+  // Parts to keep, in clip time.
+  const keep: [number, number][] = []
+  let pos = 0
+  for (const [a, b] of cuts) {
+    if (a - pos > 0.02) keep.push([pos, a])
+    pos = Math.max(pos, b)
+  }
+  if (D - pos > 0.02) keep.push([pos, D])
+  const removed = D - keep.reduce((acc, [a, b]) => acc + (b - a), 0)
+  const oldEnd = clipEnd(orig)
+  const ids: string[] = []
+  commit((d) => {
+    const later = d.clips.filter((x) => x.trackId === orig.trackId && x.id !== orig.id && x.start >= oldEnd - 0.05)
+    d.clips = d.clips.filter((x) => x.id !== orig.id)
+    let at = orig.start
+    keep.forEach(([a, b], i) => {
+      // Cut the original at b, keep the left part; cut that at a, keep the right part.
+      const base: Clip = JSON.parse(JSON.stringify(orig))
+      const { left } = splitTiming(base, b)
+      const leftClip: Clip = { ...base, ...left }
+      const { right } = splitTiming(leftClip, a)
+      const part: Clip = { ...leftClip, ...right, id: i === 0 ? orig.id : uid(), start: at }
+      if (part.keyframes) {
+        for (const k of Object.keys(part.keyframes) as AnimProp[]) part.keyframes[k] = part.keyframes[k]!.map((f) => ({ ...f, t: f.t - a }))
+      }
+      if (i > 0) {
+        delete part.transitionIn
+        delete part.animIn
+        delete part.fadeIn
+      }
+      if (i < keep.length - 1) {
+        delete part.animOut
+        delete part.fadeOut
+      }
+      at += b - a
+      d.clips.push(part)
+      ids.push(part.id)
+    })
+    for (const x of later) x.start = Math.max(0, x.start - removed)
+  })
+  set({ selection: ids.slice(0, 1), silencePreview: null })
+  return removed
+}

@@ -34,7 +34,14 @@ export async function runExport(
   const fps = settings.fps
   const total = projectDuration(project)
   const frames = Math.max(1, Math.round(total * fps))
-  const k = W / project.width
+  // The project is drawn at its own shape (RW x RH). If the output has another shape (e.g. a 16:9
+  // project exported for TikTok), it is then cropped / fitted into W x H.
+  const sameShape = Math.abs(W / H - project.width / project.height) < 0.01
+  const fit = settings.fit ?? 'blur'
+  const sc = sameShape ? W / project.width : fit === 'crop' ? Math.max(W / project.width, H / project.height) : Math.min(W / project.width, H / project.height)
+  const RW = sameShape ? W : even(project.width * sc)
+  const RH = sameShape ? H : even(project.height * sc)
+  const k = RW / project.width
 
   // Fonts must be loaded before text is drawn into an export frame.
   await Promise.all(
@@ -48,6 +55,10 @@ export async function runExport(
   canvas.width = W
   canvas.height = H
   const ctx = canvas.getContext('2d', { willReadFrequently: true })!
+  const scene = sameShape ? canvas : document.createElement('canvas')
+  scene.width = RW
+  scene.height = RH
+  const sctx = sameShape ? ctx : scene.getContext('2d')!
 
   const fileTime = (c: Clip, m: MediaItem, t: number): number => {
     const src = Math.min(Math.max(0, sourceTimeAt(c, t - c.start)), Math.max(0, m.duration - 0.02))
@@ -114,7 +125,8 @@ export async function runExport(
           clipFrames.delete(id)
         }
       }
-      renderFrame(ctx, project, t, W, H, (c) => clipFrames.get(c.id)?.canvas ?? null)
+      renderFrame(sctx, project, t, RW, RH, (c) => clipFrames.get(c.id)?.canvas ?? null)
+      if (!sameShape) placeScene(ctx, scene, W, H, fit)
       const px = ctx.getImageData(0, 0, W, H).data
       await window.api.exportWrite(new Uint8Array(px.buffer, px.byteOffset, px.byteLength))
       if (f % 5 === 0 || f === frames - 1) {
@@ -128,4 +140,30 @@ export async function runExport(
     await window.api.cancelExport()
     throw e
   }
+}
+
+/** Put the project-shaped frame into an output of another shape. */
+function placeScene(ctx: CanvasRenderingContext2D, scene: HTMLCanvasElement, W: number, H: number, fit: 'crop' | 'blur' | 'bars'): void {
+  const cover = Math.max(W / scene.width, H / scene.height)
+  const contain = Math.min(W / scene.width, H / scene.height)
+  const draw = (s: number): void => {
+    const w = scene.width * s
+    const h = scene.height * s
+    ctx.drawImage(scene, (W - w) / 2, (H - h) / 2, w, h)
+  }
+  ctx.save()
+  ctx.fillStyle = '#000'
+  ctx.fillRect(0, 0, W, H)
+  if (fit === 'crop') {
+    draw(cover)
+  } else {
+    if (fit === 'blur') {
+      // Same picture, zoomed to fill, blurred and a little darker behind the real one (TikTok style).
+      ctx.filter = `blur(${Math.round(Math.max(W, H) / 40)}px) brightness(0.75)`
+      draw(cover * 1.1)
+      ctx.filter = 'none'
+    }
+    draw(contain)
+  }
+  ctx.restore()
 }

@@ -34,6 +34,11 @@ const api = {
     return () => ipcRenderer.removeListener('app:close-request', listener)
   },
   confirmClose: (): Promise<void> => ipcRenderer.invoke('app:confirm-close'),
+  denoisedAudio: (file: string, strength: number): Promise<string> => ipcRenderer.invoke('media:denoise', file, strength),
+  silenceThreshold: (file: string, from: number, to: number): Promise<{ noise: number; speech: number; threshold: number }> =>
+    ipcRenderer.invoke('media:silenceLevel', file, from, to),
+  detectSilence: (file: string, from: number, to: number, threshold: number, minDuration: number): Promise<[number, number][]> =>
+    ipcRenderer.invoke('media:silence', file, from, to, threshold, minDuration),
   // ---- color ----
   mediaSamples: (file: string, times: number[], w: number, h: number): Promise<Uint8Array> =>
     ipcRenderer.invoke('media:samples', file, times, w, h),

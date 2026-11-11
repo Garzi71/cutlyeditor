@@ -7,7 +7,7 @@ import { Readable } from 'stream'
 import type { ExportSettings, FrameRequest, Project, RecentProject, TranscribeOptions } from '../shared/types'
 import { cancelExport, exportBegin, exportFinish, exportFrame, exportRelease, exportWrite } from './exporter'
 import { whisperCancel, whisperDownload, whisperStatus, whisperTranscribe } from './whisper'
-import { makePeaks, makeReverseProxy, makeThumbnails, probe, sampleFrames, systemInfo } from './ffmpeg'
+import { detectSilence, makeDenoisedAudio, suggestSilenceThreshold, makePeaks, makeReverseProxy, makeThumbnails, probe, sampleFrames, systemInfo } from './ffmpeg'
 import { initUpdater, installingUpdate } from './updater'
 
 // Developer aid: `CUTLY_DEBUG_PORT=9222 npm run dev` allows inspecting the UI from outside.
@@ -202,6 +202,12 @@ function registerIpc(): void {
   ipcMain.handle('media:reverse', (_e, file: string, duration: number, hasAudio: boolean) => makeReverseProxy(file, duration, hasAudio))
 
   ipcMain.handle('shell:showItem', (_e, p: string) => shell.showItemInFolder(p))
+
+  ipcMain.handle('media:denoise', (_e, file: string, strength: number) => makeDenoisedAudio(file, strength))
+  ipcMain.handle('media:silenceLevel', (_e, file: string, from: number, to: number) => suggestSilenceThreshold(file, from, to))
+  ipcMain.handle('media:silence', (_e, file: string, from: number, to: number, threshold: number, minDuration: number) =>
+    detectSilence(file, from, to, threshold, minDuration)
+  )
 
   // ---- color ----
   ipcMain.handle('media:samples', (_e, file: string, times: number[], w: number, h: number) => sampleFrames(file, times, w, h))

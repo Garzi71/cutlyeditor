@@ -35,9 +35,9 @@ interface RunResult {
   stderr: string
 }
 
-export function run(cmd: string, args: string[]): Promise<RunResult> {
+export function run(cmd: string, args: string[], cwd?: string): Promise<RunResult> {
   return new Promise((resolve, reject) => {
-    const p = spawn(cmd, args, { windowsHide: true })
+    const p = spawn(cmd, args, { windowsHide: true, cwd })
     const out: Buffer[] = []
     let err = ''
     p.stdout.on('data', (d: Buffer) => out.push(d))
@@ -324,4 +324,98 @@ export function makeReverseProxy(file: string, duration: number, hasAudio: boole
   reversing.set(out, job)
   job.catch(() => reversing.delete(out))
   return job
+}
+
+/**
+ * Silent stretches in [from, to) of a file's audio, as source times. `threshold` in dB (e.g. -35),
+ * `minDuration` in seconds.
+ */
+export async function detectSilence(
+  file: string,
+  from: number,
+  to: number,
+  threshold: number,
+  minDuration: number
+): Promise<[number, number][]> {
+  const res = await run(FFMPEG, [
+    '-hide_banner', '-nostats', '-ss', from.toFixed(3), '-t', Math.max(0.01, to - from).toFixed(3), '-i', file,
+    '-vn', '-af', `silencedetect=noise=${threshold}dB:d=${minDuration}`, '-f', 'null', '-'
+  ])
+  const out: [number, number][] = []
+  let start: number | null = null
+  for (const line of res.stderr.split(/\r?\n/)) {
+    const s = /silence_start:\s*(-?[\d.]+)/.exec(line)
+    const e = /silence_end:\s*(-?[\d.]+)/.exec(line)
+    if (s) start = Math.max(0, Number(s[1]))
+    if (e && start !== null) {
+      out.push([from + start, from + Number(e[1])])
+      start = null
+    }
+  }
+  // Silence running to the end of the range.
+  if (start !== null) out.push([from + start, to])
+  return out
+}
+
+
+// ---------- noise reduction ----------
+
+/** Folder with the bundled RNNoise model (std.rnnn). ffmpeg runs there and refers to it by name. */
+export function modelsDir(): string {
+  return app.isPackaged ? path.join(process.resourcesPath, 'models') : path.join(app.getAppPath(), 'resources', 'models')
+}
+
+/**
+ * ffmpeg filter for noise reduction at strength 0..1 (needs to run with cwd = modelsDir()).
+ * RNNoise needs 48 kHz float input, and its last partial block can come out as NaN (which breaks
+ * the AAC encoder), so NaN samples are replaced by silence.
+ */
+export const denoiseFilter = (strength: number): string =>
+  `aresample=48000,aformat=sample_fmts=flt,arnndn=m=std.rnnn:mix=${Math.min(1, Math.max(0, strength)).toFixed(2)},aeval='if(isnan(val(ch)),0,val(ch))':c=same`
+
+const denoising = new Map<string, Promise<string>>()
+
+/** Noise-reduced copy of a file's audio for the preview (cached per strength). */
+export function makeDenoisedAudio(file: string, strength: number): Promise<string> {
+  const s = Math.round(strength * 10) / 10
+  const key = `${file}|${s}`
+  let job = denoising.get(key)
+  if (job) return job
+  job = (async () => {
+    const out = path.join(await cacheDir(file), `denoise-${s.toFixed(1)}.m4a`)
+    if (await exists(out)) return out
+    const tmp = `${out}.tmp.m4a`
+    const res = await run(FFMPEG, ['-v', 'error', '-y', '-i', file, '-vn', '-af', denoiseFilter(s), '-c:a', 'aac', '-b:a', '192k', tmp], modelsDir())
+    if (res.code !== 0) throw new Error(res.stderr.trim().split('\n').pop() || 'noise reduction failed')
+    await fs.rename(tmp, out)
+    return out
+  })()
+  denoising.set(key, job)
+  job.catch(() => denoising.delete(key))
+  return job
+}
+
+/**
+ * Loudness spread of a range (peak level in dB per 50 ms window; silencedetect also compares peaks). Used to pick a silence threshold that
+ * sits between the background noise and the speech of this particular recording.
+ */
+export async function suggestSilenceThreshold(file: string, from: number, to: number): Promise<{ noise: number; speech: number; threshold: number }> {
+  const res = await run(FFMPEG, [
+    '-hide_banner', '-nostats', '-ss', from.toFixed(3), '-t', Math.max(0.05, to - from).toFixed(3), '-i', file, '-vn',
+    '-af', 'aresample=48000,asetnsamples=2400,astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.Peak_level:file=-',
+    '-f', 'null', '-'
+  ])
+  const levels = res.stdout
+    .toString()
+    .split(/\r?\n/)
+    .map((l) => /Peak_level=(-?[\d.]+|-inf)/.exec(l)?.[1])
+    .filter((v): v is string => !!v)
+    .map((v) => (v === '-inf' ? -120 : Number(v)))
+    .sort((a, b) => a - b)
+  if (!levels.length) return { noise: -60, speech: -20, threshold: -35 }
+  const at = (p: number): number => levels[Math.min(levels.length - 1, Math.floor(p * levels.length))]
+  const noise = at(0.1)
+  const speech = at(0.9)
+  const threshold = Math.round(Math.min(speech - 6, Math.max(noise + 3, noise + 0.35 * (speech - noise))))
+  return { noise, speech, threshold }
 }

@@ -8,7 +8,7 @@ import type { ExportSettings, FrameRequest, Project } from '../shared/types'
 import { clipDuration, projectDuration } from '../shared/types'
 import { playedSpan, speedOf, tauAtPlayed } from '../shared/timing'
 import { keyframeExpr } from '../shared/motion'
-import { FFMPEG, colorMatrixOf, reverseProxyPath, run } from './ffmpeg'
+import { FFMPEG, colorMatrixOf, denoiseFilter, modelsDir, reverseProxyPath, run } from './ffmpeg'
 
 const f3 = (n: number): string => n.toFixed(3)
 
@@ -57,7 +57,9 @@ function audioGraph(project: Project, total: number, inputArgs: string[], firstI
         return idx++
       }
       const L = `a${labels.length}`
-      const fmt = `asetpts=PTS-STARTPTS,aformat=sample_rates=${rate}:channel_layouts=stereo`
+      // Noise reduction runs on the source sound, before any speed change.
+      const dn = c.denoise ? `,${denoiseFilter(c.denoise)}` : ''
+      const fmt = `asetpts=PTS-STARTPTS,aformat=sample_rates=${rate}:channel_layouts=stereo${dn}`
       let head: string
       if (sp.curve && sp.curve.length >= 2) {
         // Speed ramp: short pieces, each played at its average speed. Every piece is its own input
@@ -108,7 +110,7 @@ export async function renderAudioMix(project: Project, outWav: string): Promise<
   const res = await run(FFMPEG, [
     '-hide_banner', '-v', 'error', '-y', ...inputs,
     '-/filter_complex', filterFile, '-map', '[aout]', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', outWav
-  ])
+  ], modelsDir())
   fs.unlink(filterFile).catch(() => {})
   if (res.code !== 0) throw new Error(res.stderr.trim().split('\n').slice(-3).join('\n') || 'Audio extraction failed')
 }
@@ -238,7 +240,7 @@ export async function exportBegin(project: Project, s: ExportSettings): Promise<
   const mixed = await run(FFMPEG, [
     '-hide_banner', '-v', 'error', '-y', ...audioInputs,
     '-/filter_complex', filterFile, '-map', '[aout]', '-c:a', 'pcm_s16le', audioFile
-  ])
+  ], modelsDir())
   if (mixed.code !== 0) {
     await fs.rm(tmp, { recursive: true, force: true }).catch(() => {})
     throw new Error(mixed.stderr.trim().split('\n').slice(-4).join('\n') || 'Mixing the audio failed')

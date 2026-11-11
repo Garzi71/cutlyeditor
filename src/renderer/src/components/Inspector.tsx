@@ -9,6 +9,7 @@ import { NumberField, SliderField } from './Controls'
 import TextInspector from './TextInspector'
 import { EffectInspector, TransitionInspector } from './FxPanels'
 import ColorInspector from './ColorInspector'
+import { NoisePanel, SilencePanel } from './AudioTools'
 import { AnimatedPosition, AnimatedSlider, AnimationPanel, AudioFades, KeyframeTools, SpeedPanel } from './MotionPanels'
 
 export default function Inspector(): React.JSX.Element {
@@ -133,6 +134,8 @@ function ClipInspector({ project, clip, media }: { project: Project; clip: Clip;
             <AudioFades clip={clip} />
           </div>
         )}
+        {tab === 'audio' && hasSound && <NoisePanel clip={clip} />}
+        {tab === 'audio' && hasSound && <SilencePanel clip={clip} media={media} />}
         {tab === 'info' && (
           <div className="section">
             <div className="section-title">Clip</div>

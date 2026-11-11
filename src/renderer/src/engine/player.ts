@@ -12,6 +12,8 @@ interface ClipSource {
   el: HTMLVideoElement | HTMLAudioElement
   gain: GainNode | null
   key: string // media path (or reverse proxy path) the element plays
+  /** Noise-reduced copy of the sound, played instead of the element's own audio. */
+  clean?: { el: HTMLAudioElement; gain: GainNode | null; key: string }
 }
 
 const PRELOAD_WINDOW = 3 // seconds ahead/behind the playhead that elements are kept alive
@@ -40,6 +42,24 @@ export function reverseProxy(m: MediaItem): string | null {
         proxies.set(m.path, 'error')
         toast(`Could not reverse ${m.name}: ${(e as Error).message}`, 'error')
       })
+  }
+  return null
+}
+
+// ---------- noise-reduced copies (preview of "Reduce noise") ----------
+
+const cleanAudio = new Map<string, string | 'pending' | 'error'>()
+
+function denoisedCopy(file: string, strength: number): string | null {
+  const key = `${file}|${Math.round(strength * 10) / 10}`
+  const hit = cleanAudio.get(key)
+  if (hit && hit !== 'pending' && hit !== 'error') return hit
+  if (!hit) {
+    cleanAudio.set(key, 'pending')
+    window.api
+      .denoisedAudio(file, strength)
+      .then((p) => cleanAudio.set(key, p))
+      .catch(() => cleanAudio.set(key, 'error'))
   }
   return null
 }
@@ -90,7 +110,10 @@ class Player {
 
   pause(): void {
     useEditor.setState({ playing: false })
-    for (const s of this.sources.values()) if (!s.el.paused) s.el.pause()
+    for (const s of this.sources.values()) {
+      if (!s.el.paused) s.el.pause()
+      if (s.clean && !s.clean.el.paused) s.clean.el.pause()
+    }
   }
 
   toggle(): void {
@@ -184,6 +207,44 @@ class Player {
     return s
   }
 
+  private connect(el: HTMLMediaElement): GainNode | null {
+    if (!this.audioCtx) this.audioCtx = new AudioContext()
+    try {
+      const node = this.audioCtx.createMediaElementSource(el)
+      const gain = this.audioCtx.createGain()
+      node.connect(gain).connect(this.audioCtx.destination)
+      return gain
+    } catch {
+      return null
+    }
+  }
+
+  /** Play a noise-reduced copy next to the clip's element (null = use the element's own sound). */
+  private cleanSource(s: ClipSource, file: string | null): ClipSource['clean'] {
+    if (!file) {
+      if (s.clean) this.dropClean(s)
+      return undefined
+    }
+    if (s.clean && s.clean.key === file) return s.clean
+    if (s.clean) this.dropClean(s)
+    const el = new Audio()
+    el.crossOrigin = 'anonymous'
+    el.preload = 'auto'
+    el.preservesPitch = true
+    el.src = mediaUrl(file)
+    s.clean = { el, gain: this.connect(el), key: file }
+    return s.clean
+  }
+
+  private dropClean(s: ClipSource): void {
+    if (!s.clean) return
+    s.clean.el.pause()
+    s.clean.el.removeAttribute('src')
+    s.clean.el.load()
+    s.clean.gain?.disconnect()
+    s.clean = undefined
+  }
+
   private image(m: MediaItem): HTMLImageElement {
     let img = this.images.get(m.id)
     if (!img) {
@@ -219,10 +280,18 @@ class Player {
       const tau = t - c.start
       const audible = t >= c.start && t < clipEnd(c) && !track?.muted
       const vol = audible ? volumeAt(c, tau) : 0
-      if (s.gain) s.gain.gain.value = vol
-      else el.volume = Math.min(1, vol)
+      const cleanFile = c.denoise && (m.kind === 'audio' || m.hasAudio) ? denoisedCopy(key, c.denoise) : null
+      const clean = this.cleanSource(s, cleanFile)
+      const own = clean ? 0 : vol
+      if (s.gain) s.gain.gain.value = own
+      else el.volume = Math.min(1, own)
+      if (clean) {
+        if (clean.gain) clean.gain.gain.value = vol
+        else clean.el.volume = Math.min(1, vol)
+      }
 
       const active = t >= vs && t < ve
+      if (clean) this.follow(clean.el, el, playing && active)
       if (!active) {
         if (!el.paused) el.pause()
         // Get the first frame ready just before the clip appears.
@@ -250,6 +319,14 @@ class Player {
     }
   }
 
+  /** Keep an audio copy at the same position, speed and play state as the clip's element. */
+  private follow(audio: HTMLAudioElement, master: HTMLMediaElement, playing: boolean): void {
+    if (Math.abs(audio.playbackRate - master.playbackRate) > 0.01) audio.playbackRate = master.playbackRate
+    if (Math.abs(audio.currentTime - master.currentTime) > 0.12) audio.currentTime = master.currentTime
+    if (playing && !master.paused && audio.paused) audio.play().catch(() => {})
+    if ((!playing || master.paused) && !audio.paused) audio.pause()
+  }
+
   /** Position in the element's file for clip time tau (frozen at the media's ends). */
   private elementTime(c: Clip, m: MediaItem, tau: number, reversedFile: boolean): number {
     const src = Math.min(Math.max(0, sourceTimeAt(c, tau)), Math.max(0, m.duration - 0.04))
@@ -270,6 +347,7 @@ class Player {
   private dispose(id: string): void {
     const s = this.sources.get(id)
     if (!s) return
+    this.dropClean(s)
     s.el.pause()
     s.el.removeAttribute('src')
     s.el.load()

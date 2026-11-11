@@ -11,6 +11,28 @@ import { runExport } from '../engine/exportRender'
 
 type Phase = 'setup' | 'running' | 'done' | 'error'
 
+interface Preset {
+  id: string
+  name: string
+  w: number
+  h: number
+  fps: number
+  maxSeconds?: number
+  note: string
+}
+
+/** Recommended upload settings per platform (H.264 MP4, AAC). */
+const PRESETS: Preset[] = [
+  { id: 'tiktok', name: 'TikTok', w: 1080, h: 1920, fps: 30, maxSeconds: 600, note: 'Vertical 1080×1920, up to 10 min' },
+  { id: 'reels', name: 'Reels', w: 1080, h: 1920, fps: 30, maxSeconds: 180, note: 'Instagram/Facebook Reels, up to 3 min' },
+  { id: 'shorts', name: 'Shorts', w: 1080, h: 1920, fps: 30, maxSeconds: 180, note: 'YouTube Shorts, up to 3 min' },
+  { id: 'youtube', name: 'YouTube', w: 1920, h: 1080, fps: 30, note: 'Landscape 1080p' },
+  { id: 'youtube4k', name: 'YouTube 4K', w: 3840, h: 2160, fps: 30, note: 'Landscape 4K' },
+  { id: 'igpost', name: 'Instagram post', w: 1080, h: 1350, fps: 30, maxSeconds: 3600, note: 'Portrait 4:5 for the feed' },
+  { id: 'square', name: 'Square', w: 1080, h: 1080, fps: 30, note: '1:1 for feeds' },
+  { id: 'x', name: 'X / Twitter', w: 1280, h: 720, fps: 30, maxSeconds: 140, note: 'Up to 2:20 for free accounts' }
+]
+
 export default function ExportDialog(): React.JSX.Element {
   const project = useEditor((s) => s.project)!
   const projectPath = useEditor((s) => s.projectPath)
@@ -36,9 +58,23 @@ export default function ExportDialog(): React.JSX.Element {
   }, [])
   const cancelled = useRef(false)
 
+  const [presetId, setPresetId] = useState<string>('custom')
+  const [fit, setFit] = useState<NonNullable<ExportSettings['fit']>>('blur')
+  const preset = PRESETS.find((p) => p.id === presetId)
   const scale = res / short
-  const width = Math.round((project.width * scale) / 2) * 2
-  const height = Math.round((project.height * scale) / 2) * 2
+  const width = preset ? preset.w : Math.round((project.width * scale) / 2) * 2
+  const height = preset ? preset.h : Math.round((project.height * scale) / 2) * 2
+  const sameShape = Math.abs(width / height - project.width / project.height) < 0.01
+  const tooLong = preset?.maxSeconds !== undefined && duration > preset.maxSeconds
+  const pickPreset = (id: string): void => {
+    setPresetId(id)
+    const p = PRESETS.find((x) => x.id === id)
+    if (p) {
+      setFps(p.fps)
+      setCodec('h264')
+      setQuality('high')
+    }
+  }
 
   const choose = async (): Promise<string | null> => {
     const base = projectPath ? projectPath.replace(/\.cutly$/i, '').split(/[\\/]/).pop()! : project.name
@@ -56,7 +92,7 @@ export default function ExportDialog(): React.JSX.Element {
     try {
       await runExport(
         project,
-        { outputPath: out, width, height, fps, codec, quality, useGpu },
+        { outputPath: out, width, height, fps, codec, quality, useGpu, fit },
         (p) => setProgress({ percent: p.percent, fps: p.fps, etaSeconds: p.etaSeconds }),
         () => cancelled.current
       )
@@ -101,6 +137,47 @@ export default function ExportDialog(): React.JSX.Element {
                 </div>
               </div>
               <div className="field">
+                <label>For</label>
+                <div className="preset-chips">
+                  <button className={`chip ${presetId === 'custom' ? 'active' : ''}`} onClick={() => setPresetId('custom')}>
+                    Custom
+                  </button>
+                  {PRESETS.map((p) => (
+                    <button key={p.id} className={`chip ${presetId === p.id ? 'active' : ''}`} title={p.note} onClick={() => pickPreset(p.id)}>
+                      {p.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {preset && (
+                <div className="field">
+                  <label />
+                  <div className="hint">
+                    {preset.note} · {preset.w}×{preset.h}
+                    {tooLong && (
+                      <div className="warn-inline">
+                        The video is {formatShort(duration)} long, {preset.name} allows up to {formatShort(preset.maxSeconds!)}.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+              {!sameShape && (
+                <div className="field">
+                  <label>Shape</label>
+                  <Segmented
+                    value={fit}
+                    onChange={setFit}
+                    options={[
+                      { value: 'blur', label: 'Blurred background' },
+                      { value: 'crop', label: 'Crop to fill' },
+                      { value: 'bars', label: 'Black bars' }
+                    ]}
+                  />
+                </div>
+              )}
+              {!preset && (
+              <div className="field">
                 <label>Resolution</label>
                 <select className="input" value={res} onChange={(e) => setRes(Number(e.target.value))}>
                   {resOptions.map((r) => (
@@ -111,6 +188,7 @@ export default function ExportDialog(): React.JSX.Element {
                   ))}
                 </select>
               </div>
+              )}
               <div className="field">
                 <label>Frame rate</label>
                 <Segmented value={fps} onChange={setFps} options={[24, 25, 30, 50, 60].map((f) => ({ value: f, label: String(f) }))} />
@@ -150,7 +228,7 @@ export default function ExportDialog(): React.JSX.Element {
                 />
               </div>
               <div className="hint">
-                Length {formatShort(duration)} · MP4 · AAC 192 kbps audio
+                Length {formatShort(duration)} · {width}×{height} · MP4 · AAC 192 kbps audio
               </div>
             </div>
             <div className="modal-foot">

@@ -161,6 +161,8 @@ export interface Clip {
   transitionIn?: { type: TransitionType; duration: number }
   animIn?: { type: ClipAnimType; duration: number }
   animOut?: { type: ClipAnimType; duration: number }
+  /** Noise reduction strength 0..1 (RNNoise). */
+  denoise?: number
   /** Audio fades in seconds. */
   fadeIn?: number
   fadeOut?: number
@@ -227,6 +229,8 @@ export interface ExportSettings {
   codec: 'h264' | 'hevc'
   quality: 'high' | 'medium' | 'low'
   useGpu: boolean
+  /** When the output shape differs from the project: crop to fill, blurred background, or black bars. */
+  fit?: 'crop' | 'blur' | 'bars'
 }
 
 /** The export asks the main process for source frames of a clip with this. */
