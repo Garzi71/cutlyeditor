@@ -1,7 +1,7 @@
 // Safe bridge between the UI (renderer) and the main process.
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type {
-  ExportProgress, ExportSettings, FrameRequest, MediaItem, MediaKind, Project, RecentProject, SystemInfo, TranscribeOptions,
+  ExportProgress, ExportSettings, FrameRequest, MediaItem, MediaKind, Project, RecentProject, SystemInfo, Template, TemplateInfo, TranscribeOptions,
   UpdateStatus, WhisperProgress, WhisperStatus, Word
 } from '../shared/types'
 
@@ -39,6 +39,11 @@ const api = {
     ipcRenderer.invoke('media:silenceLevel', file, from, to),
   detectSilence: (file: string, from: number, to: number, threshold: number, minDuration: number): Promise<[number, number][]> =>
     ipcRenderer.invoke('media:silence', file, from, to, threshold, minDuration),
+  listTemplates: (): Promise<TemplateInfo[]> => ipcRenderer.invoke('templates:list'),
+  saveTemplate: (t: Template): Promise<string> => ipcRenderer.invoke('templates:save', t),
+  exportTemplate: (t: Template): Promise<string | null> => ipcRenderer.invoke('templates:export', t),
+  importTemplate: (): Promise<TemplateInfo | null> => ipcRenderer.invoke('templates:import'),
+  deleteTemplate: (file: string): Promise<void> => ipcRenderer.invoke('templates:delete', file),
   // ---- color ----
   mediaSamples: (file: string, times: number[], w: number, h: number): Promise<Uint8Array> =>
     ipcRenderer.invoke('media:samples', file, times, w, h),

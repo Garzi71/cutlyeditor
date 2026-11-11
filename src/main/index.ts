@@ -4,7 +4,7 @@ import { app, BrowserWindow, dialog, ipcMain, protocol, session, shell } from 'e
 import { createReadStream, promises as fs } from 'fs'
 import path from 'path'
 import { Readable } from 'stream'
-import type { ExportSettings, FrameRequest, Project, RecentProject, TranscribeOptions } from '../shared/types'
+import type { ExportSettings, FrameRequest, Project, RecentProject, Template, TemplateInfo, TranscribeOptions } from '../shared/types'
 import { cancelExport, exportBegin, exportFinish, exportFrame, exportRelease, exportWrite } from './exporter'
 import { whisperCancel, whisperDownload, whisperStatus, whisperTranscribe } from './whisper'
 import { detectSilence, makeDenoisedAudio, suggestSilenceThreshold, makePeaks, makeReverseProxy, makeThumbnails, probe, sampleFrames, systemInfo } from './ffmpeg'
@@ -208,6 +208,62 @@ function registerIpc(): void {
   ipcMain.handle('media:silence', (_e, file: string, from: number, to: number, threshold: number, minDuration: number) =>
     detectSilence(file, from, to, threshold, minDuration)
   )
+
+  // ---- templates (stored as .cutlytemplate JSON files in the app's data folder) ----
+  const templatesDir = path.join(app.getPath('userData'), 'templates')
+  const safeName = (n: string): string => n.replace(/[^\p{L}\p{N} _-]+/gu, '').trim().slice(0, 60) || 'Template'
+  const readTemplate = async (file: string): Promise<Template> => {
+    const t = JSON.parse(await fs.readFile(file, 'utf8')) as Template
+    if (t.version !== 1 || !Array.isArray(t.slots) || !Array.isArray(t.clips) || !Array.isArray(t.tracks)) throw new Error('This is not a Cutly template.')
+    return t
+  }
+  ipcMain.handle('templates:list', async () => {
+    await fs.mkdir(templatesDir, { recursive: true })
+    const files = (await fs.readdir(templatesDir)).filter((f) => f.endsWith('.cutlytemplate'))
+    const out: TemplateInfo[] = []
+    for (const f of files) {
+      try {
+        out.push({ path: path.join(templatesDir, f), template: await readTemplate(path.join(templatesDir, f)) })
+      } catch {
+        /* skip broken files */
+      }
+    }
+    return out
+  })
+  ipcMain.handle('templates:save', async (_e, t: Template) => {
+    await fs.mkdir(templatesDir, { recursive: true })
+    const file = path.join(templatesDir, `${safeName(t.name)}.cutlytemplate`)
+    await fs.writeFile(file, JSON.stringify(t, null, 2))
+    return file
+  })
+  ipcMain.handle('templates:export', async (_e, t: Template) => {
+    const r = await dialog.showSaveDialog(win!, {
+      title: 'Share template',
+      defaultPath: `${safeName(t.name)}.cutlytemplate`,
+      filters: [{ name: 'Cutly template', extensions: ['cutlytemplate'] }]
+    })
+    if (r.canceled || !r.filePath) return null
+    await fs.writeFile(r.filePath, JSON.stringify(t, null, 2))
+    return r.filePath
+  })
+  ipcMain.handle('templates:import', async () => {
+    const r = await dialog.showOpenDialog(win!, {
+      title: 'Import template',
+      properties: ['openFile'],
+      filters: [{ name: 'Cutly template', extensions: ['cutlytemplate'] }]
+    })
+    if (r.canceled || !r.filePaths[0]) return null
+    const t = await readTemplate(r.filePaths[0])
+    await fs.mkdir(templatesDir, { recursive: true })
+    const file = path.join(templatesDir, `${safeName(t.name)}.cutlytemplate`)
+    await fs.writeFile(file, JSON.stringify(t, null, 2))
+    return { path: file, template: t }
+  })
+  ipcMain.handle('templates:delete', async (_e, file: string) => {
+    // Only files inside the templates folder can be removed.
+    if (path.dirname(path.resolve(file)) !== path.resolve(templatesDir)) throw new Error('Not a template file')
+    await fs.rm(file, { force: true })
+  })
 
   // ---- color ----
   ipcMain.handle('media:samples', (_e, file: string, times: number[], w: number, h: number) => sampleFrames(file, times, w, h))

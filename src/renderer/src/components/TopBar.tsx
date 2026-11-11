@@ -1,4 +1,6 @@
-import { FolderOpen, Home, Save, Scissors, Upload } from 'lucide-react'
+import { useState } from 'react'
+import { FolderOpen, Home, LayoutTemplate, Save, Scissors, Upload } from 'lucide-react'
+import { SaveTemplateDialog } from './Templates'
 import { closeProject, commit, openProjectFile, saveProject, useEditor } from '../store'
 
 export async function confirmDiscard(): Promise<boolean> {
@@ -9,6 +11,7 @@ export async function confirmDiscard(): Promise<boolean> {
 export default function TopBar(): React.JSX.Element {
   const name = useEditor((s) => s.project?.name ?? '')
   const dirty = useEditor((s) => s.dirty)
+  const [tplOpen, setTplOpen] = useState(false)
   return (
     <div className="topbar">
       <div className="logo">
@@ -35,6 +38,10 @@ export default function TopBar(): React.JSX.Element {
       <button className="icon-btn" title="Save (Ctrl+S)" onClick={() => saveProject()}>
         <Save size={16} />
       </button>
+      <button className="icon-btn" title="Save as template" onClick={() => setTplOpen(true)}>
+        <LayoutTemplate size={16} />
+      </button>
+      {tplOpen && <SaveTemplateDialog onClose={() => setTplOpen(false)} />}
       <div className="spacer" />
       <div className="topbar-center">
         <input

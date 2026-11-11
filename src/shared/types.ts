@@ -290,6 +290,25 @@ export interface UpdateStatus {
   error?: string
 }
 
+/** A reusable project: media clips point at numbered slots that the user fills with their own files. */
+export interface Template {
+  version: 1
+  name: string
+  description: string
+  width: number
+  height: number
+  fps: number
+  background: string
+  slots: { id: string; kind: 'video' | 'image' | 'any'; label: string }[]
+  tracks: Track[]
+  clips: Clip[] // media clips use a slot id as mediaId
+}
+
+export interface TemplateInfo {
+  path: string | null // null for built-in templates
+  template: Template
+}
+
 export interface RecentProject {
   path: string
   name: string

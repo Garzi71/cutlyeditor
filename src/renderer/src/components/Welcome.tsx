@@ -5,6 +5,7 @@ import type { RecentProject, SystemInfo } from '@shared/types'
 import { newProject, openProjectFile } from '../store'
 import { ASPECTS, RESOLUTIONS, frameSize } from '../lib/util'
 import { checkForUpdatesManually, useUpdateStatus } from './UpdateBanner'
+import { TemplatesSection } from './Templates'
 
 export default function Welcome(): React.JSX.Element {
   const [aspect, setAspect] = useState<string>('16:9')
@@ -127,6 +128,7 @@ export default function Welcome(): React.JSX.Element {
                 </div>
               )}
             </div>
+            <TemplatesSection />
             <VersionRow />
           </div>
         </div>
