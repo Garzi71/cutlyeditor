@@ -78,7 +78,9 @@ Potřebuješ mít nainstalované **Node.js** a **FFmpeg** (příkazy `ffmpeg` a 
 - **Animované šablony titulků**: v záložce Text → *Auto captions* vybereš styl ještě před generováním, u hotových titulků ho změníš v inspektoru (záložka *Templates*) pro všechny najednou. Fungují i na obyčejný text.
 - **Word animation**: jak se slova objevují (všechna / postupně / po jednom), příchod (pop, bounce, slide, fade, zoom), box za slovem, zvětšení a záře právě vysloveného slova.
 - Efekty a přechody mají **živé náhledy**, po najetí myší se přehrají.
-- Přehrávač: **bezpečné zóny** pro TikTok/Reels/Shorts (kam nesahají tlačítka aplikací) a celá obrazovka.
+- Přehrávač: **náhled jako na TikToku, Instagram Reels nebo YouTube Shorts** (ikona telefonu, pro poměr 9:16), bezpečné zóny a celá obrazovka.
+- **Poměr stran** se mění přímo v přehrávači (16:9, 4:3, 2.35:1, 9:16, 3:4, 1:1… , podle původního videa nebo vlastní).
+- **Vodicí čáry s přichytáváním**: při posouvání klipu nebo textu v přehrávači se přichytí ke středu a okrajům (Alt přichytávání vypne).
 - Sjednocený vzhled: stejné výšky ovládacích prvků, čitelnější texty, sbalitelné sekce barev, vlastní potvrzovací okna, export s odhadem velikosti souboru.
 
 ## Klávesové zkratky

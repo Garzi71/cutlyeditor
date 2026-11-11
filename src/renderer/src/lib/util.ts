@@ -41,6 +41,20 @@ export const ASPECTS = [
   { id: '4:5', w: 4, h: 5, label: 'Vertical', hint: 'Instagram feed' }
 ] as const
 
+/** Every frame shape the player's ratio menu offers (ASPECTS are the ones on the start screen). */
+export const RATIOS: { id: string; w: number; h: number; label: string }[] = [
+  { id: '16:9', w: 16, h: 9, label: 'Landscape' },
+  { id: '4:3', w: 4, h: 3, label: 'Classic TV' },
+  { id: '2.35:1', w: 235, h: 100, label: 'Cinema' },
+  { id: '2:1', w: 2, h: 1, label: 'Wide' },
+  { id: '1.85:1', w: 185, h: 100, label: 'Film' },
+  { id: '9:16', w: 9, h: 16, label: 'Portrait' },
+  { id: '3:4', w: 3, h: 4, label: 'Portrait 3:4' },
+  { id: '5.8″', w: 9, h: 19.5, label: 'Phone screen' },
+  { id: '4:5', w: 4, h: 5, label: 'Instagram feed' },
+  { id: '1:1', w: 1, h: 1, label: 'Square' }
+]
+
 export const RESOLUTIONS = [720, 1080, 1440, 2160] as const
 
 /** Frame size for an aspect ratio, where `short` is the length of the shorter side. */
@@ -53,6 +67,6 @@ export function frameSize(aw: number, ah: number, short: number): { width: numbe
 
 export function aspectIdOf(w: number, h: number): string {
   const r = w / h
-  const found = ASPECTS.find((a) => Math.abs(a.w / a.h - r) < 0.01)
+  const found = RATIOS.find((a) => Math.abs(a.w / a.h - r) < 0.01)
   return found ? found.id : `${w}x${h}`
 }

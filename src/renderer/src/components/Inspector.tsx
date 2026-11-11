@@ -4,7 +4,7 @@ import { Info, RotateCcw } from 'lucide-react'
 import type { Clip, MediaItem, Project } from '@shared/types'
 import { clipDuration } from '@shared/types'
 import { commit, defaultTransform, updateClip, useEditor } from '../store'
-import { ASPECTS, RESOLUTIONS, aspectIdOf, formatBytes, formatTimecode, frameSize } from '../lib/util'
+import { RATIOS, RESOLUTIONS, aspectIdOf, formatBytes, formatTimecode, frameSize } from '../lib/util'
 import { ColorField, NumberField, SliderField } from './Controls'
 import TextInspector from './TextInspector'
 import BgPanel from './BgPanel'
@@ -179,7 +179,7 @@ function ProjectInspector({ project }: { project: Project }): React.JSX.Element 
   const aspect = aspectIdOf(project.width, project.height)
   const short = Math.min(project.width, project.height)
   const setSize = (aspectId: string, res: number): void => {
-    const a = ASPECTS.find((x) => x.id === aspectId) ?? ASPECTS[0]
+    const a = RATIOS.find((x) => x.id === aspectId) ?? RATIOS[0]
     const s = frameSize(a.w, a.h, res)
     commit((d) => {
       d.width = s.width
@@ -195,12 +195,12 @@ function ProjectInspector({ project }: { project: Project }): React.JSX.Element 
           <div className="field">
             <label>Ratio</label>
             <select className="input" value={aspect} onChange={(e) => setSize(e.target.value, short)}>
-              {ASPECTS.map((a) => (
+              {RATIOS.map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.id} · {a.label}
                 </option>
               ))}
-              {!ASPECTS.some((a) => a.id === aspect) && <option value={aspect}>{aspect}</option>}
+              {!RATIOS.some((a) => a.id === aspect) && <option value={aspect}>{aspect}</option>}
             </select>
           </div>
           <div className="field">
