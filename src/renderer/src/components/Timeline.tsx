@@ -19,10 +19,14 @@ import { FILTERS } from '../engine/filters'
 import { previousClip } from '../engine/compositor'
 import { DEFAULT_TRANSITION, EFFECT_NAMES } from './FxPanels'
 
-const HEADER_W = 132
+const HEADER_W = 150
+/** Space between the track headers and time 0, so the playhead and first clip aren't under the header. */
+const LANE_PAD = 12
 const RULER_H = 28
-const NEW_ZONE_H = 36
-const TRACK_H: Record<TrackKind, number> = { video: 64, audio: 50 }
+const NEW_ZONE_H = 14
+const NEW_ZONE_DRAG_H = 40
+/** Track heights by what is on them. */
+const LANE_H = { main: 64, overlay: 52, slim: 36, audio: 46 }
 const MIN_PPS = 2
 const MAX_PPS = 400
 const MIN_CLIP = 0.1
@@ -51,8 +55,9 @@ export default function Timeline(): React.JSX.Element {
 
   const tracks = orderedTracks(project)
   const duration = projectDuration(project)
-  const laneViewW = Math.max(100, view.width - HEADER_W)
-  const contentSec = Math.max(duration + 30, laneViewW / pps)
+  const laneViewW = Math.max(100, view.width - HEADER_W - LANE_PAD)
+  // A little room after the end to drop clips, but no scrollbar when everything fits.
+  const contentSec = Math.max(duration + Math.max(5, (laneViewW * 0.25) / pps), laneViewW / pps)
   const contentW = contentSec * pps
   const mediaById = useMemo(() => new Map(project.media.map((m) => [m.id, m])), [project.media])
   const main = mainTrack(project, 'video')
@@ -63,7 +68,10 @@ export default function Timeline(): React.JSX.Element {
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
-    const update = (): void => setView({ left: el.scrollLeft, width: el.clientWidth })
+    const update = (): void => {
+      setView({ left: el.scrollLeft, width: el.clientWidth })
+      setScrolled(el.scrollTop > 2)
+    }
     update()
     const ro = new ResizeObserver(update)
     ro.observe(el)
@@ -72,7 +80,7 @@ export default function Timeline(): React.JSX.Element {
       if (e.ctrlKey) {
         e.preventDefault()
         const rect = el.getBoundingClientRect()
-        const x = e.clientX - rect.left - HEADER_W
+        const x = e.clientX - rect.left - HEADER_W - LANE_PAD
         const cur = useEditor.getState().pxPerSec
         const t = (el.scrollLeft + x) / cur
         const next = clamp(cur * Math.pow(1.0015, -e.deltaY), MIN_PPS, MAX_PPS)
@@ -94,6 +102,29 @@ export default function Timeline(): React.JSX.Element {
     }
   }, [])
 
+  // Keep the main track in view when tracks are added (scroll as little as needed), and bring a
+  // newly selected clip into view.
+  const trackCount = project.tracks.length
+  useEffect(() => {
+    const el = scrollRef.current
+    const row = el?.querySelector('.tl-row.main') as HTMLElement | null
+    if (!el || !row) return
+    const bottom = row.offsetTop + row.offsetHeight
+    if (bottom > el.scrollTop + el.clientHeight) el.scrollTop = bottom - el.clientHeight
+  }, [trackCount])
+  const selKey = selection.join(',')
+  useEffect(() => {
+    const el = scrollRef.current
+    const clip = el?.querySelector('.clip.selected') as HTMLElement | null
+    if (!el || !clip) return
+    const row = clip.closest('.tl-row') as HTMLElement
+    const top = row.offsetTop - RULER_H
+    const bottom = row.offsetTop + row.offsetHeight
+    if (top < el.scrollTop) el.scrollTop = top
+    else if (bottom > el.scrollTop + el.clientHeight) el.scrollTop = bottom - el.clientHeight
+  }, [selKey])
+  const [scrolled, setScrolled] = useState(false)
+
   const setZoom = (next: number): void => {
     const el = scrollRef.current
     const t = useEditor.getState().playhead
@@ -111,7 +142,7 @@ export default function Timeline(): React.JSX.Element {
   const timeAt = (clientX: number): number => {
     const el = scrollRef.current!
     const rect = el.getBoundingClientRect()
-    return Math.max(0, (clientX - rect.left - HEADER_W + el.scrollLeft) / useEditor.getState().pxPerSec)
+    return Math.max(0, (clientX - rect.left - HEADER_W - LANE_PAD + el.scrollLeft) / useEditor.getState().pxPerSec)
   }
 
   const snapPoints = (excludeId?: string): number[] => {
@@ -314,7 +345,7 @@ export default function Timeline(): React.JSX.Element {
   }
 
   const newZone = (kind: TrackKind): React.JSX.Element => (
-    <div className="tl-row tl-newtrack" style={{ height: NEW_ZONE_H }}>
+    <div className="tl-row tl-newtrack" style={{ height: dropTarget !== null || draggingId ? NEW_ZONE_DRAG_H : NEW_ZONE_H }}>
       <div className="tl-head" />
       <div
         className={`tl-lane ${dropTarget === `new-${kind}` ? 'drop' : ''}`}
@@ -334,7 +365,7 @@ export default function Timeline(): React.JSX.Element {
   const hasSel = selection.length > 0
 
   return (
-    <div className="panel timeline" style={{ ['--header-w' as string]: `${HEADER_W}px` }}>
+    <div className="panel timeline" style={{ ['--header-w' as string]: `${HEADER_W}px`, ['--lane-pad' as string]: `${LANE_PAD}px` }}>
       <div className="tl-toolbar">
         <button className="icon-btn" title="Undo (Ctrl+Z)" disabled={!canUndo} onClick={undo}>
           <Undo2 size={16} />
@@ -347,7 +378,7 @@ export default function Timeline(): React.JSX.Element {
           <Scissors size={16} />
         </button>
         <button className="icon-btn" title="Duplicate (Ctrl+D)" disabled={!hasSel} onClick={duplicateSelection}>
-          <Copy size={15} />
+          <Copy size={16} />
         </button>
         <button className="icon-btn" title="Delete (Del)" disabled={!hasSel} onClick={deleteSelection}>
           <Trash2 size={16} />
@@ -363,7 +394,7 @@ export default function Timeline(): React.JSX.Element {
         <div className="sep" />
         <div className="zoom">
           <button className="icon-btn sm" title="Zoom out" onClick={() => setZoom(pps / 1.5)}>
-            <ZoomOut size={15} />
+            <ZoomOut size={16} />
           </button>
           <input
             type="range"
@@ -374,32 +405,42 @@ export default function Timeline(): React.JSX.Element {
             onChange={(e) => setZoom(MIN_PPS * Math.pow(MAX_PPS / MIN_PPS, Number(e.target.value) / 1000))}
           />
           <button className="icon-btn sm" title="Zoom in" onClick={() => setZoom(pps * 1.5)}>
-            <ZoomIn size={15} />
+            <ZoomIn size={16} />
           </button>
         </div>
         <button className="icon-btn" title="Fit timeline" onClick={fit}>
-          <Maximize2 size={15} />
+          <Maximize2 size={16} />
         </button>
       </div>
 
-      <div className="tl-scroll" ref={scrollRef}>
-        <div className="tl-content" style={{ width: HEADER_W + contentW }}>
+      <div className={`tl-scroll ${scrolled ? 'scrolled' : ''}`} ref={scrollRef}>
+        <div className="tl-content" style={{ width: HEADER_W + LANE_PAD + contentW }}>
           <div className="tl-ruler-row" style={{ height: RULER_H }}>
             <div className="tl-corner" />
-            <Ruler pps={pps} from={visStart} to={visEnd} width={contentW} fps={project.fps} onPointerDown={startScrub} />
+            <Ruler pps={pps} from={visStart} to={visEnd} width={LANE_PAD + contentW} fps={project.fps} onPointerDown={startScrub} />
           </div>
 
           {newZone('video')}
-          {tracks.map((t) => (
+          {tracks.map((t) => {
+            const on = project.clips.filter((c) => c.trackId === t.id)
+            const isMain = t.id === main?.id
+            const isText = on.length > 0 && on.every((c) => !!c.text)
+            const isAdjust = on.length > 0 && on.every((c) => !!c.adjustment)
+            const isEffect = on.length > 0 && on.every((c) => !!c.effect)
+            const hasSound = t.kind === 'audio' || on.some((c) => mediaById.get(c.mediaId)?.hasAudio)
+            const h =
+              t.kind === 'audio' ? LANE_H.audio : isMain ? LANE_H.main : isText || isAdjust || isEffect ? LANE_H.slim : LANE_H.overlay
+            return (
             <TrackRow
               key={t.id}
               track={t}
-              isMain={t.id === main?.id}
-              isText={project.clips.some((c) => c.trackId === t.id) && project.clips.filter((c) => c.trackId === t.id).every((c) => !!c.text)}
-              isAdjust={project.clips.some((c) => c.trackId === t.id) && project.clips.filter((c) => c.trackId === t.id).every((c) => !!c.adjustment)}
-              isEffect={project.clips.some((c) => c.trackId === t.id) && project.clips.filter((c) => c.trackId === t.id).every((c) => !!c.effect)}
-              height={TRACK_H[t.kind]}
-              width={contentW}
+              isMain={isMain}
+              isText={isText}
+              isAdjust={isAdjust}
+              isEffect={isEffect}
+              hasSound={hasSound}
+              height={h}
+              width={LANE_PAD + contentW}
               drop={dropTarget === t.id}
               onLanePointerDown={(e) => {
                 useEditor.setState({ selection: [] })
@@ -422,7 +463,7 @@ export default function Timeline(): React.JSX.Element {
                       assets={assets[m.id]}
                       track={t}
                       pps={pps}
-                      height={TRACK_H[t.kind] - 6}
+                      height={h - 6}
                       selected={selection.includes(c.id)}
                       dragging={draggingId === c.id}
                       visStart={visStart}
@@ -451,17 +492,17 @@ export default function Timeline(): React.JSX.Element {
                       {c.transitionIn ? <Blend size={11} /> : <Plus size={11} />}
                     </button>
                   ))}
+              {isMain && project.clips.length === 0 && (
+                <div className="lane-empty" style={{ left: view.left + 6 - LANE_PAD, width: laneViewW + LANE_PAD - 12 }}>
+                  <Film size={16} /> Drag media here to start editing
+                </div>
+              )}
             </TrackRow>
-          ))}
+            )
+          })}
           {newZone('audio')}
 
-          {project.clips.length === 0 && (
-            <div className="tl-empty-hint" style={{ left: HEADER_W + laneViewW / 2 + view.left }}>
-              <Film size={16} /> Drag media here to start editing
-            </div>
-          )}
-
-          {snapLine !== null && <div className="snap-line" style={{ left: HEADER_W + snapLine * pps, top: RULER_H }} />}
+          {snapLine !== null && <div className="snap-line" style={{ left: HEADER_W + LANE_PAD + snapLine * pps, top: RULER_H }} />}
           <PlayheadLine pps={pps} scrollRef={scrollRef} laneViewW={laneViewW} />
         </div>
       </div>
@@ -533,7 +574,7 @@ function PlayheadLine(props: {
     const x = t * pps
     if (x > el.scrollLeft + laneViewW - 40 || x < el.scrollLeft) el.scrollLeft = Math.max(0, x - laneViewW * 0.1)
   }, [t, playing, pps, laneViewW, scrollRef])
-  return <div className="playhead" style={{ left: HEADER_W + t * pps, top: RULER_H, zIndex: 4 }} />
+  return <div className="playhead" style={{ left: HEADER_W + LANE_PAD + t * pps, top: RULER_H, zIndex: 4 }} />
 }
 
 // ---------------- tracks ----------------
@@ -544,6 +585,7 @@ function TrackRow(props: {
   isText: boolean
   isAdjust: boolean
   isEffect: boolean
+  hasSound: boolean
   height: number
   width: number
   drop: boolean
@@ -555,7 +597,7 @@ function TrackRow(props: {
 }): React.JSX.Element {
   const { track: t } = props
   return (
-    <div className="tl-row" style={{ height: props.height }}>
+    <div className={`tl-row ${props.isMain ? 'main' : ''} ${t.hidden ? 'hidden' : ''}`} style={{ height: props.height }}>
       <div className="tl-head">
         <div className={`track-label ${props.isMain ? 'main' : ''}`}>
           {props.isEffect ? <Sparkles size={13} /> : props.isAdjust ? <SlidersHorizontal size={13} /> : props.isText ? <Type size={13} /> : t.kind === 'video' ? <Film size={13} /> : <Music size={13} />}
@@ -564,14 +606,20 @@ function TrackRow(props: {
         <button className={`icon-btn sm ${t.locked ? 'active' : ''}`} title={t.locked ? 'Unlock track' : 'Lock track'} onClick={() => toggleTrack(t.id, 'locked')}>
           {t.locked ? <Lock size={13} /> : <Unlock size={13} />}
         </button>
-        {t.kind === 'video' && (
+        {t.kind === 'video' ? (
           <button className={`icon-btn sm ${t.hidden ? 'active' : ''}`} title={t.hidden ? 'Show track' : 'Hide track'} onClick={() => toggleTrack(t.id, 'hidden')}>
             {t.hidden ? <EyeOff size={13} /> : <Eye size={13} />}
           </button>
+        ) : (
+          <span />
         )}
-        <button className={`icon-btn sm ${t.muted ? 'active' : ''}`} title={t.muted ? 'Unmute track' : 'Mute track'} onClick={() => toggleTrack(t.id, 'muted')}>
-          {t.muted ? <VolumeX size={13} /> : <Volume2 size={13} />}
-        </button>
+        {props.hasSound ? (
+          <button className={`icon-btn sm ${t.muted ? 'active mute' : ''}`} title={t.muted ? 'Unmute track' : 'Mute track'} onClick={() => toggleTrack(t.id, 'muted')}>
+            {t.muted ? <VolumeX size={13} /> : <Volume2 size={13} />}
+          </button>
+        ) : (
+          <span />
+        )}
       </div>
       <div
         className={`tl-lane ${props.drop ? 'drop' : ''} ${t.locked ? 'locked' : ''}`}
@@ -629,9 +677,13 @@ const ClipView = memo(function ClipView(props: {
       )}
       <div className="clip-label">
         {c.text && <Type size={11} style={{ flexShrink: 0, marginTop: 2 }} />}
-        {isAdj && <SlidersHorizontal size={11} style={{ flexShrink: 0, marginTop: 2 }} />}
+        {c.effect ? (
+          <Sparkles size={11} style={{ flexShrink: 0, marginTop: 2 }} />
+        ) : (
+          isAdj && <SlidersHorizontal size={11} style={{ flexShrink: 0, marginTop: 2 }} />
+        )}
         {!isText && gradeIsActive(c.color) && <Palette size={11} style={{ flexShrink: 0, marginTop: 2 }} />}
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</span>
+        <span className="name">{label}</span>
         {!isText && <span className="dur">{formatShort(clipDuration(c))}</span>}
       </div>
       {!isText && (track.muted || c.volume === 0) && m.kind !== 'image' && (

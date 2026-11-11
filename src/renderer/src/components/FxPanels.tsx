@@ -7,6 +7,37 @@ import { EFFECTS, TRANSITIONS, clipDuration, clipEnd } from '@shared/types'
 import { addEffectLayer, selectTransition, setTransition, toast, updateClip, useEditor } from '../store'
 import { previousClip } from '../engine/compositor'
 import { SliderField } from './Controls'
+import FxThumb from './FxThumb'
+import { useState } from 'react'
+
+/** A preset tile with a live preview that plays on hover. */
+function FxCard(props: {
+  name: string
+  active: boolean
+  onClick: () => void
+  transition?: TransitionType
+  effect?: EffectType
+}): React.JSX.Element {
+  const [hover, setHover] = useState(false)
+  return (
+    <button
+      className={`tile ${props.active ? 'active' : ''}`}
+      title={props.name}
+      onClick={props.onClick}
+      onPointerEnter={() => setHover(true)}
+      onPointerLeave={() => setHover(false)}
+    >
+      <div className="tile-thumb">
+        {props.transition ? (
+          <FxThumb transition={props.transition} playing={hover} />
+        ) : (
+          <FxThumb effect={props.effect!} playing={hover} />
+        )}
+      </div>
+      <span className="tile-name">{props.name}</span>
+    </button>
+  )
+}
 
 export const TRANSITION_INFO: Record<TransitionType, { name: string; icon: React.ComponentType<{ size?: number }> }> = {
   dissolve: { name: 'Dissolve', icon: Droplets },
@@ -62,21 +93,13 @@ export function TransitionsPanel(): React.JSX.Element {
     <>
       <div className="panel-header">Transitions</div>
       <div className="panel-body">
-        <div className="filter-target">
-          {sel ? 'Click a transition to change the selected one.' : 'Select a clip (or click the + on a cut in the timeline), then pick a transition.'}
-        </div>
-        <div className="fx-grid">
-          {TRANSITIONS.map((t) => {
-            const Icon = TRANSITION_INFO[t].icon
-            return (
-              <button key={t} className={`fx-card ${current === t ? 'active' : ''}`} onClick={() => apply(t)}>
-                <div className={`fx-thumb tr-${t}`}>
-                  <Icon size={18} />
-                </div>
-                <span>{TRANSITION_INFO[t].name}</span>
-              </button>
-            )
-          })}
+        <p className="panel-hint">
+          {sel ? 'Click a transition to change the selected one.' : 'Select a clip or click + on a cut in the timeline, then pick one.'}
+        </p>
+        <div className="tile-grid">
+          {TRANSITIONS.map((t) => (
+            <FxCard key={t} name={TRANSITION_INFO[t].name} active={current === t} transition={t} onClick={() => apply(t)} />
+          ))}
         </div>
       </div>
     </>
@@ -92,25 +115,22 @@ export function EffectsPanel(): React.JSX.Element {
     <>
       <div className="panel-header">Effects</div>
       <div className="panel-body">
-        <div className="filter-target">
+        <p className="panel-hint">
           {selectedEffect
             ? 'Click an effect to change the selected effect layer.'
-            : 'Adds an effect layer at the playhead. It affects everything below it while it plays.'}
-        </div>
-        <div className="fx-grid">
+            : 'Adds an effect layer at the playhead. It affects everything below it.'}
+        </p>
+        <div className="tile-grid">
           {EFFECTS.map((e) => (
-            <button
+            <FxCard
               key={e}
-              className={`fx-card ${selectedEffect?.effect?.type === e ? 'active' : ''}`}
+              name={EFFECT_NAMES[e]}
+              active={selectedEffect?.effect?.type === e}
+              effect={e}
               onClick={() =>
                 selectedEffect ? updateClip(selectedEffect.id, (c) => void (c.effect!.type = e)) : addEffectLayer(e)
               }
-            >
-              <div className={`fx-thumb fx-${e}`}>
-                <Sparkles size={16} />
-              </div>
-              <span>{EFFECT_NAMES[e]}</span>
-            </button>
+            />
           ))}
         </div>
       </div>
@@ -127,9 +147,7 @@ export function TransitionInspector({ clipId }: { clipId: string }): React.JSX.E
   const max = Math.max(0.2, Math.min(clipDuration(a), clipDuration(b), 5))
   return (
     <>
-      <div className="insp-tabs">
-        <button className="insp-tab active">Transition</button>
-      </div>
+      <div className="panel-header">Transition</div>
       <div className="panel-body">
         <div className="section">
           <div className="field">
@@ -174,9 +192,7 @@ export function EffectInspector({ clip }: { clip: Clip }): React.JSX.Element {
   const fx = clip.effect!
   return (
     <>
-      <div className="insp-tabs">
-        <button className="insp-tab active">Effect layer</button>
-      </div>
+      <div className="panel-header">Effect layer</div>
       <div className="panel-body">
         <div className="section">
           <p className="hint" style={{ marginTop: 0 }}>

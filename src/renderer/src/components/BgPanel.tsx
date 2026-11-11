@@ -5,7 +5,7 @@ import type { Clip } from '@shared/types'
 import { toast, updateClip } from '../store'
 import { mattingBackend } from '../engine/matting'
 
-export default function BgPanel({ clip }: { clip: Clip }): React.JSX.Element {
+export default function BgPanel({ clip, photo }: { clip: Clip; photo?: boolean }): React.JSX.Element {
   const [status, setStatus] = useState<{ ready: boolean; size: number } | null>(null)
   const [asking, setAsking] = useState(false)
   const [progress, setProgress] = useState<number | null>(null)
@@ -84,7 +84,7 @@ export default function BgPanel({ clip }: { clip: Clip }): React.JSX.Element {
             </>
           )
         ) : (
-          <>Cuts people out of the video, no green screen needed.</>
+          <>Cuts people out of the {photo ? 'photo' : 'video'}, no green screen needed.</>
         )}
       </p>
     </div>

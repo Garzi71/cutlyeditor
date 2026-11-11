@@ -33,6 +33,24 @@ const PRESETS: Preset[] = [
   { id: 'x', name: 'X / Twitter', w: 1280, h: 720, fps: 30, maxSeconds: 140, note: 'Up to 2:20 for free accounts' }
 ]
 
+/** Small outline of an output shape. */
+function PresetShape({ w, h }: { w: number; h: number }): React.JSX.Element {
+  const k = 18 / Math.max(w, h)
+  return (
+    <span className="preset-shape">
+      <span style={{ width: Math.max(6, w * k), height: Math.max(6, h * k) }} />
+    </span>
+  )
+}
+
+/** Rough file size: typical bitrates of the quality settings, scaled by picture size and frame rate. */
+function estimateMb(w: number, h: number, fps: number, seconds: number, codec: ExportSettings['codec'], q: ExportSettings['quality']): number {
+  const mbps1080 = q === 'high' ? 14 : q === 'medium' ? 8 : 4
+  const video = mbps1080 * ((w * h) / (1920 * 1080)) ** 0.85 * (fps / 30) ** 0.6 * (codec === 'hevc' ? 0.6 : 1)
+  const mb = (seconds * (video + 0.192)) / 8
+  return mb < 10 ? Math.max(0.1, Math.round(mb * 10) / 10) : Math.round(mb)
+}
+
 export default function ExportDialog(): React.JSX.Element {
   const project = useEditor((s) => s.project)!
   const projectPath = useEditor((s) => s.projectPath)
@@ -41,7 +59,7 @@ export default function ExportDialog(): React.JSX.Element {
   const [res, setRes] = useState<number>(short)
   const [fps, setFps] = useState(project.fps)
   const [codec, setCodec] = useState<ExportSettings['codec']>('h264')
-  const [quality, setQuality] = useState<ExportSettings['quality']>('high')
+  const [quality, setQuality] = useState<ExportSettings['quality']>('medium')
   const [sys, setSys] = useState<SystemInfo | null>(null)
   const [useGpu, setUseGpu] = useState(true)
   const [output, setOutput] = useState<string | null>(null)
@@ -138,13 +156,23 @@ export default function ExportDialog(): React.JSX.Element {
               </div>
               <div className="field">
                 <label>For</label>
-                <div className="preset-chips">
-                  <button className={`chip ${presetId === 'custom' ? 'active' : ''}`} onClick={() => setPresetId('custom')}>
-                    Custom
+                <div className="preset-cards">
+                  <button className={`preset-card ${presetId === 'custom' ? 'active' : ''}`} onClick={() => setPresetId('custom')}>
+                    <PresetShape w={project.width} h={project.height} />
+                    <span>
+                      <b>Custom</b>
+                      <small className="plain">Project size</small>
+                    </span>
                   </button>
                   {PRESETS.map((p) => (
-                    <button key={p.id} className={`chip ${presetId === p.id ? 'active' : ''}`} title={p.note} onClick={() => pickPreset(p.id)}>
-                      {p.name}
+                    <button key={p.id} className={`preset-card ${presetId === p.id ? 'active' : ''}`} title={p.note} onClick={() => pickPreset(p.id)}>
+                      <PresetShape w={p.w} h={p.h} />
+                      <span>
+                        <b>{p.name}</b>
+                        <small>
+                          {p.w}×{p.h}
+                        </small>
+                      </span>
                     </button>
                   ))}
                 </div>
@@ -153,7 +181,7 @@ export default function ExportDialog(): React.JSX.Element {
                 <div className="field">
                   <label />
                   <div className="hint">
-                    {preset.note} · {preset.w}×{preset.h}
+                    {preset.note}
                     {tooLong && (
                       <div className="warn-inline">
                         The video is {formatShort(duration)} long, {preset.name} allows up to {formatShort(preset.maxSeconds!)}.
@@ -227,8 +255,11 @@ export default function ExportDialog(): React.JSX.Element {
                   ]}
                 />
               </div>
-              <div className="hint">
-                Length {formatShort(duration)} · {width}×{height} · MP4 · AAC 192 kbps audio
+              <div className="export-summary">
+                <span>
+                  {width}×{height} · {fps} fps · {formatShort(duration)}
+                </span>
+                <span>About {estimateMb(width, height, fps, duration, codec, quality)} MB · MP4</span>
               </div>
             </div>
             <div className="modal-foot">

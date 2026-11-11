@@ -1,10 +1,14 @@
 // Templates on the start screen (use built-in or own templates) and "Save as template" in the editor.
-import { useEffect, useState } from 'react'
-import { Download, Film, Image as ImageIcon, LayoutTemplate, Loader2, Share2, Trash2, Upload, X } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { FolderOpen, Film, Image as ImageIcon, LayoutTemplate, Loader2, Share2, Trash2, Upload, X } from 'lucide-react'
 import type { Template, TemplateInfo } from '@shared/types'
 import { importPaths, newProject, openProjectState, toast, useEditor } from '../store'
 import { BUILT_IN_TEMPLATES, fillTemplate, projectToTemplate, templateDuration } from '../engine/templates'
 import { formatShort } from '../lib/util'
+import { askConfirm } from './ConfirmDialog'
+import { sampleScenes } from './FxThumb'
+import { drawTextClip } from '../engine/text'
+import { ensureFont } from '../lib/fonts'
 
 const errMsg = (e: unknown): string => (e as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
 
@@ -21,13 +25,62 @@ async function useTemplate(t: Template, paths: string[]): Promise<void> {
   toast(`Created from "${t.name}". Change texts and clips as you like.`, 'success')
 }
 
-function Shape({ t }: { t: Template }): React.JSX.Element {
-  const s = 40 / Math.max(t.width, t.height)
-  return (
-    <div className="tpl-shape">
-      <div style={{ width: t.width * s, height: t.height * s }} />
-    </div>
-  )
+/** Poster for a template: a sample picture in the template's shape with its first title drawn on it. */
+function Poster({ t, index }: { t: Template; index: number }): React.JSX.Element {
+  const ref = useRef<HTMLCanvasElement>(null)
+  useEffect(() => {
+    const cv = ref.current
+    if (!cv) return
+    let cancelled = false
+    const text = t.clips.filter((c) => c.text).sort((a, b) => a.start - b.start)[0]
+    const draw = async (): Promise<void> => {
+      if (text?.text) await ensureFont(text.text.style.font, text.text.style.weight, text.text.style.italic)
+      if (cancelled) return
+      const dpr = window.devicePixelRatio || 1
+      const W = Math.round(cv.clientWidth * dpr)
+      const H = Math.round(cv.clientHeight * dpr)
+      cv.width = W
+      cv.height = H
+      const ctx = cv.getContext('2d')!
+      const bg = ctx.createLinearGradient(0, 0, W, H)
+      const hue = (index * 57 + 200) % 360
+      bg.addColorStop(0, `hsl(${hue} 35% 22%)`)
+      bg.addColorStop(1, `hsl(${(hue + 40) % 360} 30% 12%)`)
+      ctx.fillStyle = bg
+      ctx.fillRect(0, 0, W, H)
+      // The frame in the template's shape: landscape fills the tile, others sit on a blurred copy.
+      const wide = t.width / t.height >= W / H - 0.05
+      const k = wide ? Math.max(W / t.width, H / t.height) : Math.min(W / t.width, H / t.height)
+      const fw = t.width * k
+      const fh = t.height * k
+      const fx = (W - fw) / 2
+      const fy = (H - fh) / 2
+      const scene = sampleScenes()[index % 2]
+      if (!wide) {
+        const bk = Math.max(W / scene.width, H / scene.height) * 1.1
+        ctx.save()
+        ctx.filter = `blur(${6 * dpr}px) brightness(.55)`
+        ctx.drawImage(scene, (W - scene.width * bk) / 2, (H - scene.height * bk) / 2, scene.width * bk, scene.height * bk)
+        ctx.restore()
+      }
+      const sk = Math.max(fw / scene.width, fh / scene.height)
+      ctx.save()
+      ctx.beginPath()
+      ctx.rect(fx, fy, fw, fh)
+      ctx.clip()
+      ctx.drawImage(scene, fx + (fw - scene.width * sk) / 2, fy + (fh - scene.height * sk) / 2, scene.width * sk, scene.height * sk)
+      if (text) {
+        ctx.translate(fx, fy)
+        drawTextClip(ctx, text, text.in + Math.min(1.2, (text.out - text.in) * 0.6), fw, fh, k * 1.6)
+      }
+      ctx.restore()
+    }
+    void draw()
+    return () => {
+      cancelled = true
+    }
+  }, [t, index])
+  return <canvas ref={ref} />
 }
 
 export function TemplatesSection(): React.JSX.Element {
@@ -38,11 +91,11 @@ export function TemplatesSection(): React.JSX.Element {
   const all: TemplateInfo[] = [...BUILT_IN_TEMPLATES.map((template) => ({ path: null, template })), ...own]
 
   return (
-    <div className="card" style={{ marginTop: 20 }}>
+    <div className="card templates-card">
       <div className="card-head">
         <h2>Templates</h2>
         <button
-          className="btn ghost"
+          className="btn ghost sm"
           onClick={async () => {
             try {
               const t = await window.api.importTemplate()
@@ -58,17 +111,18 @@ export function TemplatesSection(): React.JSX.Element {
           <Upload size={14} /> Import
         </button>
       </div>
-      <div className="tpl-grid">
-        {all.map((info) => (
-          <button key={info.path ?? info.template.name} className="tpl-card" onClick={() => setOpen(info)}>
-            <Shape t={info.template} />
-            <div style={{ minWidth: 0 }}>
-              <b>{info.template.name}</b>
-              <small>
-                {info.template.slots.length} {info.template.slots.length === 1 ? 'clip' : 'clips'} · {formatShort(templateDuration(info.template))}
-                {info.path ? ' · yours' : ''}
-              </small>
+      <div className="poster-grid">
+        {all.map((info, i) => (
+          <button key={info.path ?? info.template.name} className="poster-card" title={info.template.description} onClick={() => setOpen(info)}>
+            <div className="poster">
+              <Poster t={info.template} index={i} />
+              <span className="poster-use">Use</span>
             </div>
+            <b>{info.template.name}</b>
+            <small>
+              {info.template.slots.length} {info.template.slots.length === 1 ? 'clip' : 'clips'} · {formatShort(templateDuration(info.template))}
+              {info.path ? ' · yours' : ''}
+            </small>
           </button>
         ))}
       </div>
@@ -98,20 +152,22 @@ function UseTemplateDialog({ info, onClose, onChanged }: { info: TemplateInfo; o
       <div className="modal">
         <div className="modal-head">
           <h2>{t.name}</h2>
-          <button className="icon-btn" onClick={onClose}>
+          <button className="icon-btn" title="Close" aria-label="Close" onClick={onClose}>
             <X size={16} />
           </button>
         </div>
         <div className="modal-body">
-          <div className="hint" style={{ fontSize: 13 }}>{t.description || 'Your own template.'}</div>
+          <div className="modal-desc">{t.description || 'Your own template.'}</div>
           <div className="hint">
             {t.width}×{t.height} · {formatShort(templateDuration(t))} · pick {t.slots.length} {t.slots.length === 1 ? 'file' : 'files'} in this order:
           </div>
           <ol className="slot-list">
-            {t.slots.map((s) => (
+            {t.slots.map((s, i) => (
               <li key={s.id}>
-                {s.kind === 'image' ? <ImageIcon size={13} /> : <Film size={13} />} {s.label}
-                <span className="hint">{s.kind === 'image' ? 'photo' : s.kind === 'video' ? 'video' : 'video or photo'}</span>
+                <span className="slot-num">{i + 1}</span>
+                {s.kind === 'image' ? <ImageIcon size={14} /> : <Film size={14} />}
+                <span className="slot-label">{s.label}</span>
+                <span className="slot-kind">{s.kind === 'image' ? 'Photo' : s.kind === 'video' ? 'Video' : 'Video or photo'}</span>
               </li>
             ))}
           </ol>
@@ -123,7 +179,7 @@ function UseTemplateDialog({ info, onClose, onChanged }: { info: TemplateInfo; o
               <button
                 className="btn ghost danger"
                 onClick={async () => {
-                  if (!confirm(`Delete the template "${t.name}"?`)) return
+                  if (!(await askConfirm({ title: `Delete the template "${t.name}"?`, confirmLabel: 'Delete', danger: true }))) return
                   await window.api.deleteTemplate(info.path!)
                   onChanged()
                   onClose()
@@ -136,8 +192,12 @@ function UseTemplateDialog({ info, onClose, onChanged }: { info: TemplateInfo; o
               </button>
             </>
           )}
+          <span className="spacer" />
+          <button className="btn" disabled={busy} onClick={onClose}>
+            Cancel
+          </button>
           <button className="btn primary" disabled={busy} onClick={pick}>
-            {busy ? <Loader2 size={14} className="spin" /> : <Download size={14} />} Choose files…
+            {busy ? <Loader2 size={14} className="spin" /> : <FolderOpen size={14} />} Choose files…
           </button>
         </div>
       </div>
@@ -168,13 +228,10 @@ export function SaveTemplateDialog({ onClose }: { onClose: () => void }): React.
   }
   return (
     <div className="modal-back" onPointerDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal">
+      <div className="modal sm">
         <div className="modal-head">
-          <h2>
-            <LayoutTemplate size={16} style={{ verticalAlign: -2, marginRight: 6 }} />
-            Save as template
-          </h2>
-          <button className="icon-btn" onClick={onClose}>
+          <h2>Save as template</h2>
+          <button className="icon-btn" title="Close" aria-label="Close" onClick={onClose}>
             <X size={16} />
           </button>
         </div>
@@ -193,8 +250,12 @@ export function SaveTemplateDialog({ onClose }: { onClose: () => void }): React.
           </div>
         </div>
         <div className="modal-foot">
-          <button className="btn" disabled={!t.slots.length} onClick={() => save(true)}>
+          <button className="btn ghost" disabled={!t.slots.length} onClick={() => save(true)}>
             <Share2 size={14} /> Save file to share…
+          </button>
+          <span className="spacer" />
+          <button className="btn" onClick={onClose}>
+            Cancel
           </button>
           <button className="btn primary" disabled={!t.slots.length} onClick={() => save(false)}>
             Save template

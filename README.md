@@ -37,7 +37,7 @@ Potřebuješ mít nainstalované **Node.js** a **FFmpeg** (příkazy `ffmpeg` a 
 - 10 přibalených fontů s češtinou (Montserrat, Poppins, Inter, Bebas Neue…) + všechny fonty nainstalované ve Windows
 - Úprava textu: font, tloušťka, velikost, barva, obrys, pozadí, stín, zarovnání, velká písmena, šířka řádku
 - **Automatické titulky** (Whisper large-v3-turbo, běží offline na tvém PC):
-  - styl *Word by word* (2–3 slova, zvýraznění právě vysloveného slova) nebo *Classic* (věty dole)
+  - 12 animovaných stylů jako na Instagramu a TikToku (Karaoke, Pop, Highlight box, One word, Build up, Bounce, Neon…) s živým náhledem, nebo klasické titulky dole
   - jazyk automaticky nebo ručně (čeština, slovenština, angličtina…)
   - při prvním použití se stáhne asi 583 MB (s NVIDIA zrychlením navíc 685 MB), pak to funguje bez internetu
   - *Apply this style to all captions* nastaví stejný vzhled všem titulkům najednou
@@ -72,6 +72,14 @@ Potřebuješ mít nainstalované **Node.js** a **FFmpeg** (příkazy `ffmpeg` a 
 - **Noise reduction** (záložka Audio): odstraní šum a hučení na pozadí (RNNoise), síla jde nastavit.
 - **Šablony**: 6 vestavěných na úvodní obrazovce (Vlog intro, TikTok hook, Slideshow…), vlastní projekt jde uložit jako šablonu (ikona v horní liště) a sdílet jako soubor `.cutlytemplate`.
 - **Export pro sítě**: předvolby TikTok, Reels, Shorts, YouTube, Instagram, X. Když má výstup jiný tvar než projekt, vybereš ořez, rozmazané pozadí nebo černé pruhy.
+
+## Nový vzhled a animované titulky (fáze 6)
+
+- **Animované šablony titulků**: v záložce Text → *Auto captions* vybereš styl ještě před generováním, u hotových titulků ho změníš v inspektoru (záložka *Templates*) pro všechny najednou. Fungují i na obyčejný text.
+- **Word animation**: jak se slova objevují (všechna / postupně / po jednom), příchod (pop, bounce, slide, fade, zoom), box za slovem, zvětšení a záře právě vysloveného slova.
+- Efekty a přechody mají **živé náhledy**, po najetí myší se přehrají.
+- Přehrávač: **bezpečné zóny** pro TikTok/Reels/Shorts (kam nesahají tlačítka aplikací) a celá obrazovka.
+- Sjednocený vzhled: stejné výšky ovládacích prvků, čitelnější texty, sbalitelné sekce barev, vlastní potvrzovací okna, export s odhadem velikosti souboru.
 
 ## Klávesové zkratky
 
@@ -116,6 +124,7 @@ Lokální sestavení instalátoru (bez zveřejnění) jde přes `npm run dist`. 
 3. **Barvy:** korekce barev, LUT, filtry, automatická korekce
 4. **Efekty:** přechody, rychlost, keyframe animace
 5. **AI nástroje:** odstranění pozadí, šumu a ticha, šablony, export pro sítě
+6. **Vzhled:** přepracované rozhraní, animované šablony titulků, živé náhledy efektů
 
 ## Struktura kódu (pro zvědavé)
 

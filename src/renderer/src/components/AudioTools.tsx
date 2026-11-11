@@ -55,22 +55,21 @@ export function SilencePanel({ clip, media }: { clip: Clip; media: MediaItem }):
       <div className="section-title">Remove silences</div>
       <div className="field">
         <label>Quieter than</label>
-        <div className="color-slider" style={{ gridTemplateColumns: '1fr auto' }}>
-          <SliderField
-            value={threshold}
-            min={-70}
-            max={-10}
-            suffix="dB"
-            onChange={(v) => {
-              setAuto(false)
-              setThreshold(v)
-            }}
-          />
-          <button className={`chip ${auto ? 'active' : ''}`} title="Pick the level from this recording" onClick={() => setAuto(!auto)}>
-            Auto
-          </button>
-        </div>
+        <SliderField
+          value={threshold}
+          min={-70}
+          max={-10}
+          suffix="dB"
+          onChange={(v) => {
+            setAuto(false)
+            setThreshold(v)
+          }}
+        />
       </div>
+      <label className="check-row field-check">
+        <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} />
+        Pick the level automatically from this recording
+      </label>
       <div className="field">
         <label>Pauses over</label>
         <SliderField value={minPause} min={0.2} max={3} step={0.1} decimals={1} suffix="s" onChange={setMinPause} />
@@ -104,7 +103,7 @@ export function SilencePanel({ clip, media }: { clip: Clip; media: MediaItem }):
           </div>
         </div>
       ) : (
-        <button className="btn" style={{ width: '100%' }} onClick={find} disabled={busy}>
+        <button className="btn block" style={{ marginBottom: 10 }} onClick={find} disabled={busy}>
           {busy ? <Loader2 size={14} className="spin" /> : <Search size={14} />} Find silences
         </button>
       )}

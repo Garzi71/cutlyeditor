@@ -70,7 +70,7 @@ function createWindow(): void {
     minWidth: 1100,
     minHeight: 680,
     show: false,
-    backgroundColor: '#0d0d0f',
+    backgroundColor: '#0b0b0d',
     title: 'Cutly',
     titleBarStyle: 'hidden',
     titleBarOverlay: { color: '#131316', symbolColor: '#c9c9d1', height: 44 },

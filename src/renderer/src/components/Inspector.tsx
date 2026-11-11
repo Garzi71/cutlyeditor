@@ -1,11 +1,11 @@
 // Right panel: properties of the selected clip, or of the project when nothing is selected.
 import { useState } from 'react'
-import { RotateCcw } from 'lucide-react'
+import { Info, RotateCcw } from 'lucide-react'
 import type { Clip, MediaItem, Project } from '@shared/types'
 import { clipDuration } from '@shared/types'
 import { commit, defaultTransform, updateClip, useEditor } from '../store'
 import { ASPECTS, RESOLUTIONS, aspectIdOf, formatBytes, formatTimecode, frameSize } from '../lib/util'
-import { NumberField, SliderField } from './Controls'
+import { ColorField, NumberField, SliderField } from './Controls'
 import TextInspector from './TextInspector'
 import BgPanel from './BgPanel'
 import { EffectInspector, TransitionInspector } from './FxPanels'
@@ -30,11 +30,9 @@ export default function Inspector(): React.JSX.Element {
         <TextInspector key={clip.id} clip={clip} />
       ) : clip?.adjustment ? (
         <>
-          <div className="insp-tabs">
-            <button className="insp-tab active">Adjustment layer</button>
-          </div>
+          <div className="panel-header">Adjustment layer</div>
           <div className="panel-body">
-            <p className="hint" style={{ margin: '12px 14px 0', lineHeight: 1.5 }}>
+            <p className="hint panel-intro">
               Colors everything below it on the timeline while it plays. Stretch it on the timeline to cover more.
             </p>
             <ColorInspector key={clip.id} clip={clip} />
@@ -44,7 +42,9 @@ export default function Inspector(): React.JSX.Element {
         <ClipInspector key={clip.id} project={project} clip={clip} media={media} />
       ) : selection.length > 1 ? (
         <>
-          <div className="panel-header">{selection.length} clips selected</div>
+          <div className="panel-header">
+            {selection.length} clips selected
+          </div>
           <div className="empty">Select a single clip to edit its properties.</div>
         </>
       ) : (
@@ -55,53 +55,48 @@ export default function Inspector(): React.JSX.Element {
 }
 
 type Tab = 'video' | 'color' | 'anim' | 'speed' | 'audio' | 'info'
-let lastTab: Tab = 'video' // remembered when switching between clips
+/** Last tab per kind of clip, remembered when switching between clips. */
+const lastTab: Record<string, Tab> = {}
 
 function ClipInspector({ project, clip, media }: { project: Project; clip: Clip; media: MediaItem }): React.JSX.Element {
   const visual = media.kind !== 'audio'
   const hasSound = media.kind === 'audio' || media.hasAudio
   const canSpeed = media.kind !== 'image'
-  const allowed: Tab[] = [
-    ...(visual ? (['video', 'color', 'anim'] as Tab[]) : []),
-    ...(canSpeed ? (['speed'] as Tab[]) : []),
-    ...(hasSound ? (['audio'] as Tab[]) : []),
-    'info'
-  ]
-  const [tab, setTabState] = useState<Tab>(allowed.includes(lastTab) ? lastTab : allowed[0])
+  const tabs: { id: Tab; label: string }[] =
+    media.kind === 'audio'
+      ? [
+          { id: 'audio', label: 'Audio' },
+          { id: 'speed', label: 'Speed' }
+        ]
+      : [
+          { id: 'video', label: media.kind === 'image' ? 'Photo' : 'Video' },
+          { id: 'color', label: 'Color' },
+          { id: 'anim', label: 'Animate' },
+          ...(canSpeed ? [{ id: 'speed' as Tab, label: 'Speed' }] : []),
+          ...(hasSound ? [{ id: 'audio' as Tab, label: 'Audio' }] : [])
+        ]
+  const allowed: Tab[] = [...tabs.map((t) => t.id), 'info']
+  const remembered = lastTab[media.kind]
+  const [tab, setTabState] = useState<Tab>(remembered && allowed.includes(remembered) ? remembered : allowed[0])
   const setTab = (t: Tab): void => {
-    lastTab = t
+    lastTab[media.kind] = t
     setTabState(t)
   }
   return (
     <>
       <div className="insp-tabs">
-        {visual && (
-          <button className={`insp-tab ${tab === 'video' ? 'active' : ''}`} onClick={() => setTab('video')}>
-            Video
+        {tabs.map((t) => (
+          <button key={t.id} className={`insp-tab ${tab === t.id ? 'active' : ''}`} onClick={() => setTab(t.id)}>
+            {t.label}
           </button>
-        )}
-        {visual && (
-          <button className={`insp-tab ${tab === 'color' ? 'active' : ''}`} onClick={() => setTab('color')}>
-            Color
-          </button>
-        )}
-        {visual && (
-          <button className={`insp-tab ${tab === 'anim' ? 'active' : ''}`} onClick={() => setTab('anim')}>
-            Animation
-          </button>
-        )}
-        {canSpeed && (
-          <button className={`insp-tab ${tab === 'speed' ? 'active' : ''}`} onClick={() => setTab('speed')}>
-            Speed
-          </button>
-        )}
-        {hasSound && (
-          <button className={`insp-tab ${tab === 'audio' ? 'active' : ''}`} onClick={() => setTab('audio')}>
-            Audio
-          </button>
-        )}
-        <button className={`insp-tab ${tab === 'info' ? 'active' : ''}`} onClick={() => setTab('info')}>
-          Info
+        ))}
+        <button
+          className={`insp-tab icon ${tab === 'info' ? 'active' : ''}`}
+          title="File info"
+          aria-label="File info"
+          onClick={() => setTab('info')}
+        >
+          <Info size={15} />
         </button>
       </div>
       <div className="panel-body">
@@ -125,7 +120,7 @@ function ClipInspector({ project, clip, media }: { project: Project; clip: Clip;
             <KeyframeTools clip={clip} props={['x', 'y', 'scale', 'rotation', 'opacity']} />
           </div>
         )}
-        {tab === 'video' && visual && <BgPanel clip={clip} />}
+        {tab === 'video' && visual && <BgPanel clip={clip} photo={media.kind === 'image'} />}
         {tab === 'anim' && visual && <AnimationPanel clip={clip} />}
         {tab === 'speed' && canSpeed && <SpeedPanel clip={clip} />}
         {tab === 'audio' && hasSound && (
@@ -145,7 +140,7 @@ function ClipInspector({ project, clip, media }: { project: Project; clip: Clip;
               <span>File</span>
               <b title={media.path}>{media.name}</b>
               <span>Type</span>
-              <b style={{ textTransform: 'capitalize' }}>{media.kind}</b>
+              <b>{media.kind[0].toUpperCase() + media.kind.slice(1)}</b>
               {media.kind !== 'audio' && (
                 <>
                   <span>Size</span>
@@ -235,12 +230,7 @@ function ProjectInspector({ project }: { project: Project }): React.JSX.Element 
           </div>
           <div className="field">
             <label>Background</label>
-            <input
-              type="color"
-              className="color-input"
-              value={project.background}
-              onChange={(e) => commit((d) => void (d.background = e.target.value), 'bg')}
-            />
+            <ColorField value={project.background} onChange={(v) => commit((d) => void (d.background = v), 'bg')} />
           </div>
         </div>
         <div className="section">
@@ -248,13 +238,13 @@ function ProjectInspector({ project }: { project: Project }): React.JSX.Element 
           <div className="info-grid">
             {[
               ['Play / pause', 'Space'],
-              ['Split', 'S  /  Ctrl+B'],
+              ['Split', 'S / Ctrl+B'],
               ['Delete', 'Del'],
               ['Duplicate', 'Ctrl+D'],
               ['Undo / Redo', 'Ctrl+Z / Ctrl+Y'],
-              ['Frame step', '← →'],
+              ['Frame step', '← / →'],
               ['Start / end', 'Home / End'],
-              ['Zoom timeline', 'Ctrl + wheel'],
+              ['Zoom timeline', 'Ctrl+Wheel'],
               ['Save', 'Ctrl+S'],
               ['Export', 'Ctrl+E']
             ].map(([a, b]) => (
@@ -271,7 +261,19 @@ function Shortcut({ name, keys }: { name: string; keys: string }): React.JSX.Ele
   return (
     <>
       <span>{name}</span>
-      <b className="kbd">{keys}</b>
+      <span className="keys">
+        {keys.split(/\s+/).map((k, i) =>
+          k === '/' ? (
+            <span key={i} className="key-sep">
+              or
+            </span>
+          ) : (
+            <kbd key={i} className="kbd">
+              {k}
+            </kbd>
+          )
+        )}
+      </span>
     </>
   )
 }

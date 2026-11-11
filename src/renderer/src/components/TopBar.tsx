@@ -2,10 +2,16 @@ import { useState } from 'react'
 import { FolderOpen, Home, LayoutTemplate, Save, Scissors, Upload } from 'lucide-react'
 import { SaveTemplateDialog } from './Templates'
 import { closeProject, commit, openProjectFile, saveProject, useEditor } from '../store'
+import { askConfirm } from './ConfirmDialog'
 
 export async function confirmDiscard(): Promise<boolean> {
   if (!useEditor.getState().dirty) return true
-  return confirm('You have unsaved changes. Discard them?')
+  return askConfirm({
+    title: 'Discard unsaved changes?',
+    message: 'Your latest edits to this project have not been saved.',
+    confirmLabel: 'Discard',
+    danger: true
+  })
 }
 
 export default function TopBar(): React.JSX.Element {
@@ -20,10 +26,10 @@ export default function TopBar(): React.JSX.Element {
         </div>
         Cutly
       </div>
-      <div className="sep" style={{ width: 8 }} />
+      <div className="sep" />
       <button
         className="icon-btn"
-        title="Home"
+        title="Home (back to the start screen)"
         onClick={async () => (await confirmDiscard()) && closeProject()}
       >
         <Home size={16} />
@@ -38,7 +44,7 @@ export default function TopBar(): React.JSX.Element {
       <button className="icon-btn" title="Save (Ctrl+S)" onClick={() => saveProject()}>
         <Save size={16} />
       </button>
-      <button className="icon-btn" title="Save as template" onClick={() => setTplOpen(true)}>
+      <button className="icon-btn" title="Save as template (reuse this layout in new projects)" onClick={() => setTplOpen(true)}>
         <LayoutTemplate size={16} />
       </button>
       {tplOpen && <SaveTemplateDialog onClose={() => setTplOpen(false)} />}
@@ -51,7 +57,9 @@ export default function TopBar(): React.JSX.Element {
           onChange={(e) => commit((d) => void (d.name = e.target.value), 'rename')}
           onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
         />
-        {dirty && <div className="dirty-dot" title="Unsaved changes" />}
+        <span className="save-state" title={dirty ? 'Press Ctrl+S to save' : undefined}>
+          {dirty ? 'Unsaved' : 'Saved'}
+        </span>
       </div>
       <button className="btn primary" onClick={() => useEditor.setState({ exportOpen: true })}>
         <Upload size={15} /> Export

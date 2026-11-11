@@ -1,9 +1,10 @@
 // Left panel: tab rail (Media, Audio, Text, ...) and the media library.
 import { useState } from 'react'
 import {
-  AudioLines, Blend, Film, Image as ImageIcon, Loader2, Music, Palette, Plus, Sparkles, Trash2, Type, Upload
+  AudioLines, Blend, Check, Film, Image as ImageIcon, Loader2, Music, Palette, Plus, Sparkles, Trash2, Type, Upload
 } from 'lucide-react'
 import type { Clip, MediaItem } from '@shared/types'
+import { askConfirm } from './ConfirmDialog'
 import { addClip, importPaths, removeMedia, useEditor } from '../store'
 import { formatShort, mediaUrl } from '../lib/util'
 import TextPanel from './TextPanel'
@@ -82,7 +83,7 @@ function Library({ filter, title }: { filter: (m: MediaItem) => boolean; title: 
       </div>
       <div className="panel-body">
         <button
-          className={`import-btn ${drag ? 'drag' : ''}`}
+          className={`import-btn ${drag ? 'drag' : ''} ${items.length === 0 ? 'big' : ''}`}
           onClick={pickAndImport}
           onDragOver={(e) => {
             if (e.dataTransfer.types.includes('Files')) {
@@ -93,29 +94,86 @@ function Library({ filter, title }: { filter: (m: MediaItem) => boolean; title: 
           onDragLeave={() => setDrag(false)}
           onDrop={() => setDrag(false)}
         >
-          <Upload size={20} />
-          <div style={{ textAlign: 'left' }}>
-            <b>Import</b>
-            <span className="hint">Click or drop video, audio and images</span>
-          </div>
+          {items.length === 0 ? (
+            <>
+              <span className="import-icon">{title === 'Audio' ? <AudioLines size={26} /> : <Upload size={26} />}</span>
+              <div>
+                <b>{title === 'Audio' ? 'Import music and sounds' : 'Import media'}</b>
+                <span className="hint">Drag files here or click to browse</span>
+                <span className="hint formats">{title === 'Audio' ? 'MP3, WAV, M4A, or a video’s sound' : 'Videos, photos and audio'}</span>
+              </div>
+            </>
+          ) : (
+            <>
+              <Upload size={20} />
+              <div>
+                <b>Import</b>
+                <span className="hint">{title === 'Audio' ? 'Music and sound effects' : 'Video, audio, photos'}</span>
+              </div>
+            </>
+          )}
         </button>
-        {items.length === 0 ? (
-          <div className="empty">
-            {title === 'Audio' ? <AudioLines size={28} /> : <Film size={28} />}
-            <div>
-              {title === 'Audio' ? 'Imported music and sounds show up here.' : 'Your imported videos and photos show up here.'}
-            </div>
-          </div>
-        ) : (
-          <div className="media-grid">
-            {items.map((m) => (
-              <MediaCard key={m.id} m={m} used={used.has(m.id)} />
-            ))}
+        {items.length > 0 && (
+          <div className={title === 'Audio' ? 'audio-list' : 'media-grid'}>
+            {items.map((m) =>
+              title === 'Audio' ? <AudioRow key={m.id} m={m} used={used.has(m.id)} /> : <MediaCard key={m.id} m={m} used={used.has(m.id)} />
+            )}
           </div>
         )}
       </div>
     </>
   )
+}
+
+/** Audio files as compact rows: icon, name, length, add / remove. */
+function AudioRow({ m, used }: { m: MediaItem; used: boolean }): React.JSX.Element {
+  return (
+    <div
+      className="audio-row"
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData('application/x-cutly-media', m.id)
+        e.dataTransfer.effectAllowed = 'copy'
+      }}
+      onDoubleClick={() => addClip(m.id)}
+      title={`${m.name}\nDouble-click or drag to the timeline`}
+    >
+      <span className="audio-icon">
+        <Music size={15} />
+      </span>
+      <span className="audio-name">{m.name}</span>
+      {used && <Check size={13} className="audio-used" aria-label="Used in the timeline" />}
+      <span className="audio-dur">{formatShort(m.duration)}</span>
+      <div className="row-actions">
+        <button className="icon-btn xs" title="Add to timeline at the playhead" onClick={() => addClip(m.id)}>
+          <Plus size={14} />
+        </button>
+        <button
+          className="icon-btn xs danger"
+          title="Remove from project"
+          onClick={() => {
+            void removeMediaAsk(m, used)
+          }}
+        >
+          <Trash2 size={13} />
+        </button>
+      </div>
+    </div>
+  )
+}
+
+async function removeMediaAsk(m: MediaItem, used: boolean): Promise<void> {
+  if (
+    used &&
+    !(await askConfirm({
+      title: `Remove "${m.name}"?`,
+      message: 'It is used in the timeline. Its clips will be removed too.',
+      confirmLabel: 'Remove',
+      danger: true
+    }))
+  )
+    return
+  removeMedia(m.id)
 }
 
 function MediaCard({ m, used }: { m: MediaItem; used: boolean }): React.JSX.Element {
@@ -142,7 +200,11 @@ function MediaCard({ m, used }: { m: MediaItem; used: boolean }): React.JSX.Elem
         ) : (
           <KindIcon size={24} />
         )}
-        {used && <div className="media-used" title="Used in the timeline" />}
+        {used && (
+          <div className="media-used" title="Used in the timeline">
+            <Check size={10} strokeWidth={3} />
+          </div>
+        )}
         <div className="media-kind">
           <KindIcon size={12} />
         </div>
@@ -155,7 +217,7 @@ function MediaCard({ m, used }: { m: MediaItem; used: boolean }): React.JSX.Elem
             className="del"
             title="Remove from project"
             onClick={() => {
-              if (!used || confirm(`"${m.name}" is used in the timeline. Remove it and its clips?`)) removeMedia(m.id)
+              void removeMediaAsk(m, used)
             }}
           >
             <Trash2 size={13} />

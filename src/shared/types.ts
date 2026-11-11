@@ -61,6 +61,20 @@ export interface TextStyle {
   backgroundOpacity: number // 0 = no box
   highlight: string // colour of the word being spoken (captions)
   maxWidth: number // fraction of the frame width used for wrapping
+  fx?: WordFx // word-by-word animation (caption templates)
+}
+
+/**
+ * How the words of a text animate as they are spoken. Captions use the recognised word times;
+ * plain text gets evenly spaced times so the same templates work there too.
+ */
+export interface WordFx {
+  show: 'all' | 'spoken' | 'current' // all words / words appear as spoken / only the current word
+  enter: 'none' | 'pop' | 'bounce' | 'slide' | 'fade' | 'zoom' // how a word comes in when it starts
+  activeScale: number // size of the current word (1 = same as the others)
+  box: string // colour of a rounded box behind the current word ('' = none)
+  dim: number // opacity of words not spoken yet (1 = no dimming)
+  glow: boolean // the current word glows in the highlight colour
 }
 
 /** A spoken word; times are in the clip's own time (same scale as clip.in / clip.out). */

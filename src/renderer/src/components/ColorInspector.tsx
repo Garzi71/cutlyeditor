@@ -8,7 +8,7 @@ import { IDENTITY_CURVE, curveTable, defaultGrade, loadCube } from '../engine/co
 import { FILTERS } from '../engine/filters'
 import { autoCorrect, matchColors } from '../engine/autocolor'
 import { formatShort } from '../lib/util'
-import { SliderField } from './Controls'
+import { Section, SliderField } from './Controls'
 
 const errMsg = (e: unknown): string => (e as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
 
@@ -127,8 +127,8 @@ export default function ColorInspector({ clip }: { clip: Clip }): React.JSX.Elem
             )
           )}
           <button
-            className="btn ghost"
-            style={{ width: '100%', marginTop: 8 }}
+            className="btn block"
+            style={{ marginTop: 8, marginBottom: 10 }}
             onClick={() => {
               const n = applyColorToAll(clip.id)
               toast(`Color copied to ${n} other clip${n === 1 ? '' : 's'}`, 'success')
@@ -189,33 +189,34 @@ export default function ColorInspector({ clip }: { clip: Clip }): React.JSX.Elem
         )}
       </div>
 
-      <div className="section">
-        <div className="section-title">Light</div>
+      <Section id="color-light" title="Light">
         {slider('exposure', 'Exposure', -2, 2, 0.05)}
         {slider('contrast', 'Contrast')}
         {slider('highlights', 'Highlights')}
         {slider('shadows', 'Shadows')}
         {slider('whites', 'Whites')}
         {slider('blacks', 'Blacks')}
-      </div>
+      </Section>
 
-      <div className="section">
-        <div className="section-title">Color</div>
+      <Section id="color-color" title="Color">
         {slider('temperature', 'Temperature')}
         {slider('tint', 'Tint')}
         {slider('saturation', 'Saturation')}
         {slider('vibrance', 'Vibrance')}
-      </div>
+      </Section>
 
-      <div className="section">
-        <div className="section-title">
-          HSL
-          {g.hsl && (
+      <Section
+        id="color-hsl"
+        title="HSL"
+        defaultOpen={false}
+        actions={
+          g.hsl && (
             <button className="icon-btn sm" title="Reset HSL" onClick={() => update((d) => void delete d.hsl)}>
               <RotateCcw size={14} />
             </button>
-          )}
-        </div>
+          )
+        }
+      >
         <div className="hsl-bands">
           {HSL_BANDS.map((b) => {
             const v = g.hsl?.[b]
@@ -232,7 +233,7 @@ export default function ColorInspector({ clip }: { clip: Clip }): React.JSX.Elem
           })}
         </div>
         <div className="field">
-          <label style={{ textTransform: 'capitalize' }}>{band} hue</label>
+          <label>{band[0].toUpperCase() + band.slice(1)} hue</label>
           <SliderField value={hsl.h} min={-100} max={100} onChange={(v) => setHsl('h', v)} />
         </div>
         <div className="field">
@@ -243,21 +244,31 @@ export default function ColorInspector({ clip }: { clip: Clip }): React.JSX.Elem
           <label>Luminance</label>
           <SliderField value={hsl.l} min={-100} max={100} onChange={(v) => setHsl('l', v)} />
         </div>
-      </div>
+      </Section>
 
-      <div className="section">
+      <Section
+        id="color-curves"
+        title="Curves"
+        defaultOpen={false}
+        actions={
+          g.curves && (
+            <button className="icon-btn sm" title="Reset curves" onClick={() => update((d) => void delete d.curves)}>
+              <RotateCcw size={14} />
+            </button>
+          )
+        }
+      >
         <CurvesEditor
           curves={g.curves}
           onChange={(curves, key) => update((d) => void (d.curves = curves), key ? `crv-${clip.id}-${key}` : undefined)}
           onReset={() => update((d) => void delete d.curves)}
         />
-      </div>
+      </Section>
 
-      <div className="section">
-        <div className="section-title">Effects</div>
+      <Section id="color-effects" title="Details" defaultOpen={false}>
         {slider('sharpen', 'Sharpen', 0, 100)}
         {slider('vignette', 'Vignette', 0, 100)}
-      </div>
+      </Section>
     </>
   )
 }
@@ -333,8 +344,7 @@ function CurvesEditor(props: {
 
   return (
     <>
-      <div className="section-title">
-        Curves
+      <div className="curve-tabs">
         <div style={{ display: 'flex', gap: 2 }}>
           {(['master', 'r', 'g', 'b'] as Channel[]).map((c) => (
             <button
@@ -346,11 +356,6 @@ function CurvesEditor(props: {
               {c === 'master' ? 'All' : c.toUpperCase()}
             </button>
           ))}
-          {props.curves && (
-            <button className="icon-btn sm" title="Reset curves" onClick={props.onReset}>
-              <RotateCcw size={14} />
-            </button>
-          )}
         </div>
       </div>
       <svg

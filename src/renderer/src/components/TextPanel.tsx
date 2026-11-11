@@ -5,8 +5,8 @@ import type { TextStyle, WhisperProgress, WhisperStatus } from '@shared/types'
 import { projectDuration } from '@shared/types'
 import { addCaptions, addTextClip, toast, useEditor } from '../store'
 import { DEFAULT_TEXT_STYLE } from '../engine/text'
-import { LANGUAGES, TEXT_PRESETS, captionStyle, groupWords, lineCharsFor, type CaptionMode } from '../engine/captions'
-import { Segmented } from './Controls'
+import { CAPTION_TEMPLATES, LANGUAGES, TEXT_PRESETS, groupWords, lineCharsFor, templateStyle, type CaptionTemplate } from '../engine/captions'
+import CaptionTemplates from './CaptionTemplates'
 
 const mb = (n: number): string => (n >= 1e9 ? `${(n / 1e9).toFixed(2)} GB` : `${Math.round(n / 1e6)} MB`)
 
@@ -29,25 +29,58 @@ export default function TextPanel(): React.JSX.Element {
     addTextClip({ content: 'Your text', style: full })
   }
 
+  const [tab, setTab] = useState<'text' | 'captions'>(() => load('textTab', 'text'))
+  useEffect(() => {
+    try {
+      localStorage.setItem('textTab', tab)
+    } catch {
+      /* ignore */
+    }
+  }, [tab])
+
+  const addAnimated = (t: CaptionTemplate): void => {
+    const { style } = templateStyle(t, project.width, project.height)
+    addTextClip({ content: 'Your text here', style })
+  }
+
   return (
     <>
-      <div className="panel-header">Text</div>
-      <div className="panel-body">
-        <button className="import-btn" style={{ height: 56 }} onClick={() => add({})}>
-          <Plus size={18} />
-          <div style={{ textAlign: 'left' }}>
-            <b>Add text</b>
-            <span className="hint">At the playhead, on its own track</span>
-          </div>
-        </button>
-        <div className="preset-grid">
-          {TEXT_PRESETS.map((p) => (
-            <button key={p.name} className="preset" title={p.name} onClick={() => add(p.style)}>
-              <PresetSample style={{ ...DEFAULT_TEXT_STYLE, ...p.style }} label={p.name} />
-            </button>
-          ))}
+      <div className="panel-header">
+        <div className="panel-tabs">
+          <button className={tab === 'text' ? 'active' : ''} onClick={() => setTab('text')}>
+            Text
+          </button>
+          <button className={tab === 'captions' ? 'active' : ''} onClick={() => setTab('captions')}>
+            Auto captions
+          </button>
         </div>
-        <AutoCaptions />
+      </div>
+      <div className="panel-body">
+        {tab === 'text' ? (
+          <>
+            <button className="import-btn" onClick={() => add({})}>
+              <Plus size={18} />
+              <div>
+                <b>Add text</b>
+                <span className="hint">At the playhead, on its own track</span>
+              </div>
+            </button>
+            <div className="sub-head">Styles</div>
+            <div className="preset-grid">
+              {TEXT_PRESETS.map((p) => (
+                <button key={p.name} className="preset" title={p.name} onClick={() => add(p.style)}>
+                  <PresetSample style={{ ...DEFAULT_TEXT_STYLE, ...p.style }} label={p.name} />
+                </button>
+              ))}
+            </div>
+            <div className="sub-head">Animated</div>
+            <div className="panel-pad">
+              <CaptionTemplates onPick={addAnimated} />
+            </div>
+          </>
+        ) : (
+          <AutoCaptions />
+        )}
       </div>
     </>
   )
@@ -89,7 +122,8 @@ type Phase = 'idle' | 'confirm' | 'working'
 function AutoCaptions(): React.JSX.Element {
   const project = useEditor((s) => s.project)!
   const [language, setLanguage] = useState<string>(() => load('capLang', 'auto'))
-  const [mode, setMode] = useState<CaptionMode>(() => load<CaptionMode>('capMode', 'tiktok'))
+  const [tplId, setTplId] = useState<string>(() => load('capTemplate', 'karaoke'))
+  const tpl = CAPTION_TEMPLATES.find((t) => t.id === tplId) ?? CAPTION_TEMPLATES[0]
   const [status, setStatus] = useState<WhisperStatus | null>(null)
   const [phase, setPhase] = useState<Phase>('idle')
   const [useGpu, setUseGpu] = useState(true)
@@ -110,11 +144,11 @@ function AutoCaptions(): React.JSX.Element {
   useEffect(() => {
     try {
       localStorage.setItem('capLang', language)
-      localStorage.setItem('capMode', mode)
+      localStorage.setItem('capTemplate', tplId)
     } catch {
       /* ignore */
     }
-  }, [language, mode])
+  }, [language, tplId])
 
   const ready = !!status && status.cpuEngine && status.model
   const needGpuDownload = !!status && status.nvidia && useGpu && !status.gpuEngine
@@ -140,8 +174,8 @@ function AutoCaptions(): React.JSX.Element {
       if (!words.length) {
         toast('No speech was found in the timeline audio.', 'info')
       } else {
-        const chunks = groupWords(words, mode, lineCharsFor(p.width, p.height))
-        const { style, y } = captionStyle(mode, p.width, p.height)
+        const chunks = groupWords(words, tpl.group, lineCharsFor(p.width, p.height))
+        const { style, y } = templateStyle(tpl, p.width, p.height)
         addCaptions(chunks, style, y)
         toast(`Added ${chunks.length} captions (${words.length} words). Click one to change the style.`, 'success')
       }
@@ -174,38 +208,12 @@ function AutoCaptions(): React.JSX.Element {
 
   return (
     <>
-      <div className="sub-head">
-        <Captions size={16} /> Auto captions
+      <p className="hint panel-intro">Turns the speech in your timeline into captions, word by word. Runs offline on your computer.</p>
+      <div className="sub-head">Style</div>
+      <div className="panel-pad">
+        <CaptionTemplates selected={tpl.id} onPick={(t) => setTplId(t.id)} />
       </div>
-      <div className="cap-box">
-        <div className="field">
-          <label>Language</label>
-          <select className="input" value={language} disabled={phase === 'working'} onChange={(e) => setLanguage(e.target.value)}>
-            {LANGUAGES.map((l) => (
-              <option key={l.code} value={l.code}>
-                {l.label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="field">
-          <label>Style</label>
-          <Segmented
-            value={mode}
-            onChange={setMode}
-            options={[
-              { value: 'tiktok', label: 'Word by word' },
-              { value: 'classic', label: 'Classic' }
-            ]}
-          />
-        </div>
-        {status?.nvidia && (
-          <label className="check-row">
-            <input type="checkbox" checked={useGpu} disabled={phase === 'working'} onChange={(e) => setUseGpu(e.target.checked)} />
-            Use NVIDIA GPU (much faster)
-          </label>
-        )}
-
+      <div className="sticky-foot">
         {phase === 'confirm' && status && (
           <div className="confirm-box">
             <b>Download speech recognition?</b>
@@ -217,18 +225,18 @@ function AutoCaptions(): React.JSX.Element {
               {!status.model && <li>Language model (Whisper large-v3-turbo) · {mb(status.sizes.model)}</li>}
               {needGpuDownload && <li>NVIDIA GPU acceleration · {mb(status.sizes.gpu)}</li>}
             </ul>
-            <div style={{ display: 'flex', gap: 6 }}>
+            <div className="btn-row" style={{ marginBottom: 0 }}>
               <button className="btn primary" onClick={downloadAndRun}>
                 <Download size={14} /> Download
               </button>
-              <button className="btn ghost" onClick={() => setPhase('idle')}>
+              <button className="btn" onClick={() => setPhase('idle')}>
                 Cancel
               </button>
             </div>
           </div>
         )}
 
-        {phase === 'working' && progress && (
+        {phase === 'working' && progress ? (
           <div>
             <div className="cap-progress-label">
               <span>
@@ -239,18 +247,35 @@ function AutoCaptions(): React.JSX.Element {
             <div className="progress">
               <div style={{ width: `${progress.percent}%` }} />
             </div>
-            <button className="btn ghost" style={{ marginTop: 8 }} onClick={() => window.api.whisperCancel()}>
+            <button className="btn block" style={{ marginTop: 10 }} onClick={() => window.api.whisperCancel()}>
               <X size={14} /> Cancel
             </button>
           </div>
+        ) : (
+          phase === 'idle' && (
+            <>
+              <div className="foot-row">
+                <select className="input" value={language} title="Spoken language" onChange={(e) => setLanguage(e.target.value)}>
+                  {LANGUAGES.map((l) => (
+                    <option key={l.code} value={l.code}>
+                      {l.label}
+                    </option>
+                  ))}
+                </select>
+                {status?.nvidia && (
+                  <label className="check-row" title="Use the NVIDIA graphics card (much faster)">
+                    <input type="checkbox" checked={useGpu} onChange={(e) => setUseGpu(e.target.checked)} />
+                    GPU
+                  </label>
+                )}
+              </div>
+              <button className="btn primary block" disabled={!hasAudio || !status} onClick={generate}>
+                <Captions size={15} /> Generate captions
+              </button>
+              {!hasAudio && <div className="hint">Add a video or audio with speech to the timeline first.</div>}
+            </>
+          )
         )}
-
-        {phase === 'idle' && (
-          <button className="btn primary" disabled={!hasAudio || !status} onClick={generate}>
-            <Captions size={15} /> Generate captions
-          </button>
-        )}
-        {phase === 'idle' && !hasAudio && <div className="hint">Add a video or audio with speech to the timeline first.</div>}
       </div>
     </>
   )

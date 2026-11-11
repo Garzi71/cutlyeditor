@@ -1,5 +1,5 @@
 // Turning recognised words into caption clips, and the text style presets.
-import type { TextStyle, Word } from '@shared/types'
+import type { TextStyle, Word, WordFx } from '@shared/types'
 import type { CaptionChunk } from '../store'
 import { DEFAULT_TEXT_STYLE } from './text'
 
@@ -89,6 +89,110 @@ export function captionStyle(mode: CaptionMode, projectW: number, projectH: numb
     },
     y: Math.round(projectH * (portrait ? 0.3 : 0.38))
   }
+}
+
+/** A caption look: style + word animation, sized for a 1080-wide portrait frame. */
+export interface CaptionTemplate {
+  id: string
+  name: string
+  group: CaptionMode // 'tiktok' = 1–3 words at a time, 'classic' = up to two lines
+  style: Partial<TextStyle>
+}
+
+const fx = (f: Partial<WordFx>): WordFx => ({ show: 'all', enter: 'none', activeScale: 1, box: '', dim: 1, glow: false, ...f })
+
+export const CAPTION_TEMPLATES: CaptionTemplate[] = [
+  {
+    id: 'karaoke',
+    name: 'Karaoke',
+    group: 'tiktok',
+    style: { font: 'Montserrat', weight: 900, uppercase: true, size: 92, color: '#ffffff', highlight: '#ffe14d', stroke: '#000000', strokeWidth: 9, shadow: true, fx: fx({}) }
+  },
+  {
+    id: 'pop',
+    name: 'Pop',
+    group: 'tiktok',
+    style: { font: 'Montserrat', weight: 900, uppercase: true, size: 92, color: '#ffffff', highlight: '#3dff8b', stroke: '#000000', strokeWidth: 9, shadow: true, fx: fx({ enter: 'pop', activeScale: 1.14 }) }
+  },
+  {
+    id: 'box',
+    name: 'Highlight box',
+    group: 'tiktok',
+    style: { font: 'Poppins', weight: 800, uppercase: false, size: 84, color: '#ffffff', highlight: '#ffffff', strokeWidth: 0, shadow: true, fx: fx({ box: '#7c3aed', activeScale: 1.06 }) }
+  },
+  {
+    id: 'one',
+    name: 'One word',
+    group: 'tiktok',
+    style: { font: 'Anton', weight: 400, uppercase: true, size: 140, color: '#ffffff', highlight: '#ffffff', stroke: '#000000', strokeWidth: 10, shadow: true, fx: fx({ show: 'current', enter: 'zoom' }) }
+  },
+  {
+    id: 'build',
+    name: 'Build up',
+    group: 'tiktok',
+    style: { font: 'Montserrat', weight: 800, uppercase: false, size: 86, color: '#ffffff', highlight: '#ffffff', strokeWidth: 0, shadow: true, fx: fx({ show: 'spoken', enter: 'slide' }) }
+  },
+  {
+    id: 'bounce',
+    name: 'Bounce',
+    group: 'tiktok',
+    style: { font: 'Poppins', weight: 800, uppercase: true, size: 88, color: '#ffffff', highlight: '#ff4d6d', stroke: '#000000', strokeWidth: 8, shadow: true, fx: fx({ show: 'spoken', enter: 'bounce', activeScale: 1.08 }) }
+  },
+  {
+    id: 'neon',
+    name: 'Neon',
+    group: 'tiktok',
+    style: { font: 'Oswald', weight: 700, uppercase: true, size: 96, color: '#e9fbff', highlight: '#22e4ff', strokeWidth: 0, shadow: false, fx: fx({ glow: true, activeScale: 1.08, dim: 0.55 }) }
+  },
+  {
+    id: 'soft',
+    name: 'Soft karaoke',
+    group: 'tiktok',
+    style: { font: 'Inter', weight: 800, uppercase: false, size: 84, color: '#ffffff', highlight: '#ffffff', strokeWidth: 0, shadow: true, fx: fx({ dim: 0.38 }) }
+  },
+  {
+    id: 'news',
+    name: 'Red box',
+    group: 'tiktok',
+    style: { font: 'Archivo Black', weight: 400, uppercase: true, size: 80, color: '#ffffff', highlight: '#ffffff', strokeWidth: 0, shadow: true, fx: fx({ box: '#e11d48', enter: 'pop', activeScale: 1.05 }) }
+  },
+  {
+    id: 'glow',
+    name: 'Glow pop',
+    group: 'tiktok',
+    style: { font: 'Montserrat', weight: 900, uppercase: true, size: 90, color: '#ffffff', highlight: '#ffb21a', strokeWidth: 0, shadow: true, fx: fx({ show: 'spoken', enter: 'pop', glow: true, activeScale: 1.1 }) }
+  },
+  {
+    id: 'elegant',
+    name: 'Elegant',
+    group: 'tiktok',
+    style: { font: 'Playfair Display', weight: 700, italic: true, uppercase: false, size: 88, color: '#ffffff', highlight: '#f5d27a', strokeWidth: 0, shadow: true, fx: fx({ show: 'spoken', enter: 'fade' }) }
+  },
+  {
+    id: 'classic',
+    name: 'Subtitles',
+    group: 'classic',
+    style: { font: 'Inter', weight: 600, uppercase: false, size: 54, color: '#ffffff', highlight: '#ffffff', strokeWidth: 0, shadow: false, background: '#000000', backgroundOpacity: 0.6 }
+  }
+]
+
+/** A template's style sized for the project, and where captions go (y offset from the centre). */
+export function templateStyle(t: CaptionTemplate, projectW: number, projectH: number): { style: TextStyle; y: number } {
+  const short = Math.min(projectW, projectH)
+  const portrait = projectH > projectW
+  const k = (short / 1080) * (portrait ? 1 : 0.88)
+  const style: TextStyle = {
+    ...DEFAULT_TEXT_STYLE,
+    backgroundOpacity: 0,
+    italic: false,
+    ...t.style,
+    fx: t.style.fx ? { ...t.style.fx } : undefined,
+    size: Math.round((t.style.size ?? DEFAULT_TEXT_STYLE.size) * k),
+    strokeWidth: Math.round((t.style.strokeWidth ?? 0) * k),
+    maxWidth: t.group === 'classic' ? (portrait ? 0.86 : 0.7) : 0.8
+  }
+  const y = Math.round(projectH * (t.group === 'classic' ? (portrait ? 0.3 : 0.38) : portrait ? 0.12 : 0.18))
+  return { style, y }
 }
 
 /** Rough characters per line for classic captions, from the frame shape. */

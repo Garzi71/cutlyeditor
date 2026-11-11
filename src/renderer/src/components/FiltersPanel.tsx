@@ -47,14 +47,14 @@ export default function FiltersPanel(): React.JSX.Element {
     <>
       <div className="panel-header">Filters</div>
       <div className="panel-body">
-        <div className="filter-target">
+        <p className="panel-hint">
           {target ? (
             <>Applies to the selected {target.adjustment ? 'adjustment layer' : 'clip'}. Click again to remove.</>
           ) : (
-            <>Nothing selected: a filter is added as an adjustment layer over everything below it.</>
+            <>Nothing selected: the filter is added as an adjustment layer over everything below it.</>
           )}
-        </div>
-        <div className="btn-row" style={{ padding: '0 12px 4px' }}>
+        </p>
+        <div className="btn-row panel-pad">
           <button className="btn" onClick={() => addAdjustmentLayer(defaultGrade())}>
             <SlidersHorizontal size={14} /> Adjustment layer
           </button>
@@ -65,11 +65,11 @@ export default function FiltersPanel(): React.JSX.Element {
         {groups.map((group) => (
           <div key={group}>
             <div className="sub-head">{group}</div>
-            <div className="filter-grid">
+            <div className="tile-grid">
               {FILTERS.filter((f) => f.group === group).map((f) => (
-                <button key={f.id} className={`filter-card ${active === f.id ? 'active' : ''}`} onClick={() => apply(f)}>
+                <button key={f.id} className={`tile ${active === f.id ? 'active' : ''}`} title={f.name} onClick={() => apply(f)}>
                   <FilterThumb filter={f} thumb={thumb} />
-                  <span>{f.name}</span>
+                  <span className="tile-name">{f.name}</span>
                 </button>
               ))}
             </div>
@@ -109,11 +109,11 @@ function FilterThumb({ filter, thumb }: { filter: FilterPreset; thumb?: string }
     let cancelled = false
     const render = (src: CanvasImageSource): void => {
       const c = document.createElement('canvas')
-      c.width = 96
-      c.height = 54
+      c.width = 192
+      c.height = 120
       const ctx = c.getContext('2d')!
-      ctx.drawImage(src, 0, 0, 96, 54)
-      const img = ctx.getImageData(0, 0, 96, 54)
+      ctx.drawImage(src, 0, 0, 192, 120)
+      const img = ctx.getImageData(0, 0, 192, 120)
       const fn = pointFunction({ adjust: { ...DEFAULT_ADJUST }, filter: { id: filter.id, intensity: 1 } })!
       for (let i = 0; i < img.data.length; i += 4) {
         const o = fn([img.data[i] / 255, img.data[i + 1] / 255, img.data[i + 2] / 255])
@@ -137,5 +137,5 @@ function FilterThumb({ filter, thumb }: { filter: FilterPreset; thumb?: string }
       cancelled = true
     }
   }, [key, filter.id, thumb])
-  return <div className="filter-thumb">{url && <img src={url} alt="" />}</div>
+  return <div className="tile-thumb">{url && <img src={url} alt="" />}</div>
 }

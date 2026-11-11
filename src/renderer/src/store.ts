@@ -437,6 +437,22 @@ export function addCaptions(chunks: CaptionChunk[], style: TextStyle, y: number)
 }
 
 /** Copy the style and position of one text clip to all other text clips on the same track. */
+/** Give a text clip a template style; for captions, every caption on its track gets it. One undo step. */
+export function applyTextTemplate(clipId: string, style: TextStyle): number {
+  const src = get().project?.clips.find((c) => c.id === clipId)
+  if (!src?.text) return 0
+  let n = 0
+  commit((d) => {
+    for (const c of d.clips) {
+      if (!c.text) continue
+      if (c.id !== src.id && !(src.text!.caption && c.text.caption && c.trackId === src.trackId)) continue
+      c.text.style = JSON.parse(JSON.stringify(style))
+      n++
+    }
+  })
+  return n
+}
+
 export function applyTextStyleToTrack(clipId: string): number {
   const p = get().project
   const src = p?.clips.find((c) => c.id === clipId)

@@ -105,6 +105,40 @@ export function activeWord(data: TextData, localTime: number): number {
   return -1
 }
 
+/** How long a word's entrance animation lasts (seconds). */
+const ENTER = 0.22
+
+const clamp01 = (v: number): number => Math.min(1, Math.max(0, v))
+const easeOutCubic = (p: number): number => 1 - Math.pow(1 - p, 3)
+const easeOutBack = (p: number): number => {
+  const c = 1.9
+  return 1 + (c + 1) * Math.pow(p - 1, 3) + c * Math.pow(p - 1, 2)
+}
+const easeOutBounce = (p: number): number => {
+  const n = 7.5625
+  const d = 2.75
+  if (p < 1 / d) return n * p * p
+  if (p < 2 / d) return n * (p -= 1.5 / d) * p + 0.75
+  if (p < 2.5 / d) return n * (p -= 2.25 / d) * p + 0.9375
+  return n * (p -= 2.625 / d) * p + 0.984375
+}
+
+/**
+ * Word times for animated text. Captions have real ones; plain text with a word animation gets
+ * evenly spaced times (each word ~0.4 s, all shown by 80 % of the clip).
+ */
+export function wordTimes(data: TextData, clipIn: number, clipOut: number): TextData['words'] {
+  if (data.words || !data.style.fx) return data.words
+  const tokens = data.content.split(/\s+/).filter(Boolean)
+  if (!tokens.length) return undefined
+  const per = Math.min(0.4, ((clipOut - clipIn) * 0.8) / tokens.length)
+  return tokens.map((text, i) => ({
+    text,
+    start: clipIn + i * per,
+    end: i === tokens.length - 1 ? Math.max(clipOut, clipIn + (i + 1) * per) : clipIn + (i + 1) * per
+  }))
+}
+
 /**
  * Draw a text clip.
  * @param localTime time inside the clip (clip.in + time since clip.start)
@@ -119,16 +153,27 @@ export function drawTextClip(
   k: number,
   pose?: Pose
 ): void {
-  const data = clip.text
+  let data = clip.text
   if (!data || !data.content.trim()) return
   const s = data.style
+  const fx = s.fx
+  if (fx && !data.words) data = { ...data, words: wordTimes(data, clip.in, clip.out) }
+  let lit = activeWord(data, localTime)
+  if (fx?.show === 'current') {
+    // Only the word being spoken, centred on its own.
+    const all = data.words
+    if (lit < 0 || !all) return
+    const w = all[lit]
+    data = { ...data, content: w.text, words: [w] }
+    lit = 0
+  }
+  const words = data.words
   const tr = pose ?? { ...clip.transform, blur: 0, reveal: 1 }
   const layout = layoutText(data, canvasW, k)
-  const lit = activeWord(data, localTime)
   // Typewriter: only the first characters are shown (layout stays the same, so nothing jumps).
   const totalChars = layout.lines.reduce((a, l) => a + l.tokens.reduce((b, t) => b + t.text.length + 1, 0), 0)
-  let charsLeft = tr.reveal >= 1 ? Infinity : Math.floor(totalChars * tr.reveal)
-  const charBudget = charsLeft
+  const charBudget = tr.reveal >= 1 ? Infinity : Math.floor(totalChars * tr.reveal)
+  const size = s.size * k
 
   ctx.save()
   ctx.globalAlpha = tr.opacity
@@ -145,7 +190,7 @@ export function drawTextClip(
     ctx.save()
     ctx.globalAlpha = tr.opacity * s.backgroundOpacity
     ctx.fillStyle = s.background
-    const r = Math.min(s.size * k * 0.25, height / 2)
+    const r = Math.min(size * 0.25, height / 2)
     ctx.beginPath()
     ctx.roundRect(left, top, width, height, r)
     ctx.fill()
@@ -158,39 +203,127 @@ export function drawTextClip(
   ctx.lineJoin = 'round'
   ctx.miterLimit = 2
 
-  const drawPass = (pass: 'stroke' | 'fill'): void => {
-    charsLeft = charBudget
-    layout.lines.forEach((line, li) => {
-      const y = top + pad + lineHeight * (li + 0.5)
-      let x =
-        s.align === 'left' ? left + pad : s.align === 'right' ? left + width - pad - line.width : -line.width / 2
-      for (const t of line.tokens) {
-        if (charsLeft <= 0) return
-        const text = charsLeft < t.text.length ? t.text.slice(0, charsLeft) : t.text
-        charsLeft -= t.text.length + 1
-        if (pass === 'stroke') {
-          ctx.strokeText(text, x, y)
-        } else {
-          ctx.fillStyle = t.wordIndex >= 0 && t.wordIndex === lit ? s.highlight : s.color
-          ctx.fillText(text, x, y)
+  // Where every word goes, and how it looks right now.
+  interface Placed {
+    text: string
+    x: number // centre
+    y: number
+    line: number
+    w: number
+    active: boolean
+    alpha: number
+    scale: number
+    dy: number
+  }
+  const placed: Placed[] = []
+  let charsLeft = charBudget
+  layout.lines.forEach((line, li) => {
+    const y = top + pad + lineHeight * (li + 0.5)
+    let x = s.align === 'left' ? left + pad : s.align === 'right' ? left + width - pad - line.width : -line.width / 2
+    for (const t of line.tokens) {
+      if (charsLeft <= 0) break
+      const text = charsLeft < t.text.length ? t.text.slice(0, charsLeft) : t.text
+      charsLeft -= t.text.length + 1
+      const p: Placed = { text, x: x + t.width / 2, y, line: li, w: ctx.measureText(text).width, active: false, alpha: 1, scale: 1, dy: 0 }
+      x += t.width + layout.spaceWidth
+      const w = t.wordIndex >= 0 ? words?.[t.wordIndex] : undefined
+      if (w) {
+        p.active = t.wordIndex === lit
+        const spoken = localTime >= w.start
+        if (fx) {
+          if (fx.show === 'spoken' && !spoken) continue
+          if (fx.show === 'all' && !spoken && !p.active) p.alpha = fx.dim
+          // Entrance: words that appear animate in; with all words visible, the current one is emphasised.
+          const e = spoken ? clamp01((localTime - w.start) / ENTER) : 1
+          if (e < 1 && fx.enter !== 'none') {
+            const appearing = fx.show !== 'all'
+            if (fx.enter === 'pop') {
+              p.scale = appearing ? 0.4 + 0.6 * easeOutBack(e) : 1 + 0.25 * Math.sin(Math.PI * e)
+              if (appearing) p.alpha *= clamp01(e * 3)
+            } else if (fx.enter === 'bounce') {
+              p.dy = appearing ? -size * 0.6 * (1 - easeOutBounce(e)) : -size * 0.18 * Math.sin(Math.PI * e)
+              if (appearing) p.alpha *= clamp01(e * 4)
+            } else if (fx.enter === 'slide') {
+              p.dy = size * 0.45 * (1 - easeOutCubic(e))
+              if (appearing) p.alpha *= easeOutCubic(e)
+            } else if (fx.enter === 'fade') {
+              if (appearing) p.alpha *= easeOutCubic(e)
+            } else if (fx.enter === 'zoom') {
+              p.scale = 1 + (appearing ? 0.7 : 0.3) * (1 - easeOutCubic(e))
+              if (appearing) p.alpha *= clamp01(e * 2.5)
+            }
+          }
+          if (p.active && fx.activeScale !== 1)
+            p.scale *= 1 + (fx.activeScale - 1) * easeOutCubic(clamp01((localTime - w.start) / 0.1))
         }
-        x += t.width + layout.spaceWidth
       }
-    })
+      placed.push(p)
+    }
+  })
+
+  // A bigger or boxed current word pushes its neighbours aside instead of overlapping them.
+  for (const p of placed) {
+    if (!p.active || (p.scale <= 1 && !fx?.box)) continue
+    const grow = (Math.max(1, p.scale) - 1) * (p.w / 2) + (fx?.box ? size * 0.16 * p.scale : 0)
+    for (const q of placed) if (q !== p && q.line === p.line) q.x += q.x < p.x ? -grow : grow
   }
 
-  if (s.shadow) {
+  const shadowOn = (): void => {
+    if (!s.shadow) return
     ctx.shadowColor = 'rgba(0,0,0,0.55)'
-    ctx.shadowBlur = s.size * k * 0.12
-    ctx.shadowOffsetY = s.size * k * 0.04
+    ctx.shadowBlur = size * 0.12
+    ctx.shadowOffsetY = size * 0.04
   }
-  if (s.strokeWidth > 0) {
-    ctx.strokeStyle = s.stroke
-    ctx.lineWidth = s.strokeWidth * 2 * k
-    drawPass('stroke')
+  const shadowOff = (): void => {
     ctx.shadowColor = 'transparent'
+    ctx.shadowBlur = 0
+    ctx.shadowOffsetY = 0
   }
-  drawPass('fill')
+  const at = (p: Placed, draw: () => void): void => {
+    if (p.alpha <= 0.001) return
+    ctx.save()
+    ctx.globalAlpha = tr.opacity * p.alpha
+    ctx.translate(p.x, p.y + p.dy)
+    if (p.scale !== 1) ctx.scale(p.scale, p.scale)
+    draw()
+    ctx.restore()
+  }
+  const box = (p: Placed): void =>
+    at(p, () => {
+      const px = size * 0.16
+      const h = size * 1.12
+      ctx.fillStyle = fx!.box
+      ctx.beginPath()
+      ctx.roundRect(-p.w / 2 - px, -h / 2, p.w + px * 2, h, size * 0.2)
+      ctx.fill()
+    })
+  const stroke = (p: Placed): void => at(p, () => ctx.strokeText(p.text, -p.w / 2, 0))
+  const fill = (p: Placed): void =>
+    at(p, () => {
+      const on = p.active && !!words
+      ctx.fillStyle = on ? s.highlight : s.color
+      if (on && fx?.glow) {
+        ctx.shadowColor = s.highlight
+        ctx.shadowBlur = size * 0.45
+        ctx.shadowOffsetY = 0
+        ctx.fillText(p.text, -p.w / 2, 0)
+      }
+      ctx.fillText(p.text, -p.w / 2, 0)
+    })
+
+  // The current word is drawn last so its box, outline and size sit on top of its neighbours.
+  for (const group of [placed.filter((p) => !p.active), placed.filter((p) => p.active)]) {
+    if (fx?.box) for (const p of group) if (p.active) box(p)
+    shadowOn()
+    if (s.strokeWidth > 0) {
+      ctx.strokeStyle = s.stroke
+      ctx.lineWidth = s.strokeWidth * 2 * k
+      for (const p of group) stroke(p)
+      shadowOff()
+    }
+    for (const p of group) fill(p)
+    shadowOff()
+  }
   ctx.restore()
 }
 

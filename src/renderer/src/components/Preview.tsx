@@ -1,6 +1,6 @@
 // Center panel: the player canvas, play controls and on-canvas move/scale handles.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Pause, Play, SkipBack, SkipForward } from 'lucide-react'
+import { Maximize, Minimize, Pause, Play, ScanLine, SkipBack, SkipForward } from 'lucide-react'
 import { clipEnd, fitSize, projectDuration } from '@shared/types'
 import { player } from '../engine/player'
 import { isClipLocked, setAnimated, setAnimatedValues, useEditor } from '../store'
@@ -14,6 +14,15 @@ export default function Preview(): React.JSX.Element {
   const stageRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [box, setBox] = useState({ w: 0, h: 0 })
+  const [safe, setSafe] = useState(false)
+  const [full, setFull] = useState(false)
+  const panelRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const on = (): void => setFull(document.fullscreenElement === panelRef.current)
+    document.addEventListener('fullscreenchange', on)
+    return () => document.removeEventListener('fullscreenchange', on)
+  }, [])
+  const portrait = project.height > project.width
 
   useEffect(() => {
     player.attach(canvasRef.current)
@@ -38,7 +47,7 @@ export default function Preview(): React.JSX.Element {
   }, [project.width, project.height])
 
   return (
-    <div className="panel" style={{ minWidth: 0 }}>
+    <div className="panel player-panel" ref={panelRef} style={{ minWidth: 0 }}>
       <div className="panel-header">
         Player
         <span className="hint" style={{ fontWeight: 400, marginLeft: 'auto' }}>
@@ -48,6 +57,7 @@ export default function Preview(): React.JSX.Element {
       <div className="preview-stage" ref={stageRef} onPointerDown={(e) => e.target === e.currentTarget && useEditor.setState({ selection: [] })}>
         <div className="preview-frame" style={{ width: box.w, height: box.h }}>
           <canvas ref={canvasRef} />
+          {safe && <SafeZones portrait={portrait} />}
           <SelectionOverlay scale={box.w / project.width} />
         </div>
       </div>
@@ -64,8 +74,44 @@ export default function Preview(): React.JSX.Element {
             <SkipForward size={16} />
           </button>
         </div>
-        <div className="preview-right" />
+        <div className="preview-right">
+          <button
+            className={`icon-btn ${safe ? 'active on' : ''}`}
+            title="Safe zones: where TikTok, Reels and Shorts buttons cover the video"
+            aria-pressed={safe}
+            onClick={() => setSafe(!safe)}
+          >
+            <ScanLine size={16} />
+          </button>
+          <button
+            className="icon-btn"
+            title={full ? 'Exit full screen (Esc)' : 'Full screen'}
+            onClick={() => (full ? document.exitFullscreen() : panelRef.current?.requestFullscreen())}
+          >
+            {full ? <Minimize size={16} /> : <Maximize size={16} />}
+          </button>
+        </div>
       </div>
+    </div>
+  )
+}
+
+/** Areas that the social apps' own buttons and captions cover (approximate, for 9:16 and 16:9). */
+function SafeZones({ portrait }: { portrait: boolean }): React.JSX.Element {
+  return (
+    <div className="safe-zones">
+      {portrait ? (
+        <>
+          <div className="sz" style={{ left: 0, right: 0, top: 0, height: '9%' }} />
+          <div className="sz" style={{ left: 0, right: 0, bottom: 0, height: '22%' }}>
+            <span>Captions & buttons</span>
+          </div>
+          <div className="sz" style={{ right: 0, top: '9%', bottom: '22%', width: '14%' }} />
+          <div className="sz-safe" style={{ left: '4%', right: '14%', top: '9%', bottom: '22%' }} />
+        </>
+      ) : (
+        <div className="sz-safe" style={{ left: '5%', right: '5%', top: '5%', bottom: '5%' }} />
+      )}
     </div>
   )
 }

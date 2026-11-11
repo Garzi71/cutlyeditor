@@ -1,6 +1,7 @@
 // Inspector panels for phase 4: keyframe buttons, speed, in/out animations and audio fades.
-import { useRef } from 'react'
-import { ChevronLeft, ChevronRight, Diamond, Rewind, RotateCcw, Trash2 } from 'lucide-react'
+import { useRef, useState } from 'react'
+import { Ban, ChevronLeft, ChevronRight, Diamond, Rewind, RotateCcw, Trash2 } from 'lucide-react'
+import AnimThumb from './AnimThumb'
 import type { AnimProp, Clip, ClipAnimType, Easing, SpeedSettings } from '@shared/types'
 import { CLIP_ANIMS, clipDuration } from '@shared/types'
 import { curveSpeedAt, timelineDuration } from '@shared/timing'
@@ -202,7 +203,7 @@ export function SpeedPanel({ clip }: { clip: Clip }): React.JSX.Element {
         <button className={`btn ${sp.reverse ? 'primary' : ''}`} onClick={() => set({ ...sp, reverse: !sp.reverse })}>
           <Rewind size={14} /> {sp.reverse ? 'Reversed' : 'Reverse'}
         </button>
-        <button className="btn ghost" onClick={() => setSpeed(clip.id, undefined)}>
+        <button className="btn" onClick={() => setSpeed(clip.id, undefined)}>
           <RotateCcw size={14} /> Reset
         </button>
       </div>
@@ -262,8 +263,27 @@ function SpeedCurveEditor({ curve, onChange }: { curve: [number, number][]; onCh
 // ---------------- in / out animations ----------------
 
 const ANIM_LABEL: Record<ClipAnimType, string> = {
-  fade: 'Fade', zoomIn: 'Zoom in', zoomOut: 'Zoom out', slideLeft: 'Slide ←', slideRight: 'Slide →',
-  slideUp: 'Slide ↑', slideDown: 'Slide ↓', pop: 'Pop', spin: 'Spin', blur: 'Blur', typewriter: 'Typewriter'
+  fade: 'Fade', zoomIn: 'Zoom in', zoomOut: 'Zoom out', slideLeft: 'Slide left', slideRight: 'Slide right',
+  slideUp: 'Slide up', slideDown: 'Slide down', pop: 'Pop', spin: 'Spin', blur: 'Blur', typewriter: 'Typewriter'
+}
+
+function AnimTile(props: { type: ClipAnimType | null; out: boolean; active: boolean; onClick: () => void }): React.JSX.Element {
+  const [hover, setHover] = useState(false)
+  const name = props.type ? ANIM_LABEL[props.type] : 'None'
+  return (
+    <button
+      className={`tile ${props.active ? 'active' : ''}`}
+      title={name}
+      onClick={props.onClick}
+      onPointerEnter={() => setHover(true)}
+      onPointerLeave={() => setHover(false)}
+    >
+      <div className="tile-thumb anim-thumb">
+        {props.type ? <AnimThumb type={props.type} out={props.out} playing={hover} /> : <Ban size={18} />}
+      </div>
+      <span className="tile-name">{name}</span>
+    </button>
+  )
 }
 
 export function AnimationPanel({ clip }: { clip: Clip }): React.JSX.Element {
@@ -273,27 +293,21 @@ export function AnimationPanel({ clip }: { clip: Clip }): React.JSX.Element {
     const a = clip[which]
     return (
       <div className="section">
-        <div className="section-title">
-          {title}
-          {a && (
-            <button className="icon-btn sm" title="Remove" onClick={() => updateClip(clip.id, (c) => void delete c[which])}>
-              <Trash2 size={13} />
-            </button>
-          )}
-        </div>
+        <div className="section-title">{title}</div>
         <div className="anim-grid">
+          <AnimTile type={null} out={which === 'animOut'} active={!a} onClick={() => updateClip(clip.id, (c) => void delete c[which])} />
           {types.map((t) => (
-            <button
+            <AnimTile
               key={t}
-              className={`chip ${a?.type === t ? 'active' : ''}`}
+              type={t}
+              out={which === 'animOut'}
+              active={a?.type === t}
               onClick={() =>
                 updateClip(clip.id, (c) => {
-                  c[which] = a?.type === t ? undefined : { type: t, duration: a?.duration ?? Math.min(t === 'typewriter' ? 1.5 : 0.6, D / 2) }
+                  c[which] = { type: t, duration: a?.duration ?? Math.min(t === 'typewriter' ? 1.5 : 0.6, D / 2) }
                 })
               }
-            >
-              {ANIM_LABEL[t]}
-            </button>
+            />
           ))}
         </div>
         {a && (
@@ -315,8 +329,8 @@ export function AnimationPanel({ clip }: { clip: Clip }): React.JSX.Element {
   }
   return (
     <>
-      {row('animIn', 'In')}
-      {row('animOut', 'Out')}
+      {row('animIn', 'In animation')}
+      {row('animOut', 'Out animation')}
     </>
   )
 }

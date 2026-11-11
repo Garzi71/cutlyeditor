@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { AlertCircle, CheckCircle2, Info } from 'lucide-react'
+import { AlertCircle, CheckCircle2, Info, Upload, X } from 'lucide-react'
 import { player } from './engine/player'
 import {
   deleteSelection, duplicateSelection, importPaths, openProjectFile, redo, saveProject, splitAt, undo, useEditor
@@ -13,6 +13,7 @@ import Inspector from './components/Inspector'
 import Timeline from './components/Timeline'
 import ExportDialog from './components/ExportDialog'
 import UpdateBanner from './components/UpdateBanner'
+import ConfirmHost, { askConfirm } from './components/ConfirmDialog'
 import { projectDuration } from '@shared/types'
 
 export default function App(): React.JSX.Element {
@@ -24,7 +25,11 @@ export default function App(): React.JSX.Element {
   useEffect(
     () =>
       window.api.onCloseRequest(async () => {
-        if (useEditor.getState().exportOpen && !confirm('An export may be running. Close anyway?')) return
+        if (
+          useEditor.getState().exportOpen &&
+          !(await askConfirm({ title: 'Close Cutly?', message: 'An export may still be running.', confirmLabel: 'Close', danger: true }))
+        )
+          return
         if (await confirmDiscard()) window.api.confirmClose()
       }),
     []
@@ -41,15 +46,27 @@ export default function App(): React.JSX.Element {
         <Welcome />
       )}
       {exportOpen && <ExportDialog />}
-      {dragging && <div className="drop-overlay">Drop files to import</div>}
+      {dragging && (
+        <div className="drop-overlay">
+          <div className="drop-card">
+            <Upload size={28} />
+            <b>Drop files to import</b>
+            <span>Videos, photos and audio</span>
+          </div>
+        </div>
+      )}
       <UpdateBanner />
       <Toasts />
+      <ConfirmHost />
     </>
   )
 }
 
 function Workspace(): React.JSX.Element {
-  const [tlHeight, setTlHeight] = useState(() => Number(localStorage.getItem('tlHeight')) || 330)
+  // Default timeline height follows the window (about a third of it); a dragged size is remembered.
+  const [tlHeight, setTlHeight] = useState(
+    () => Number(localStorage.getItem('tlHeight')) || Math.round(Math.min(420, Math.max(200, window.innerHeight * 0.36)))
+  )
   const ref = useRef<HTMLDivElement>(null)
 
   const startResize = (e: React.PointerEvent): void => {
@@ -70,7 +87,7 @@ function Workspace(): React.JSX.Element {
   }
 
   return (
-    <div className="workspace" ref={ref} style={{ gridTemplateRows: `minmax(0, 1fr) 6px ${tlHeight}px` }}>
+    <div className="workspace" ref={ref} style={{ gridTemplateRows: `minmax(0, 1fr) 6px min(${tlHeight}px, 44vh)` }}>
       <div className="upper">
         <MediaPanel />
         <Preview />
@@ -197,7 +214,17 @@ function Toasts(): React.JSX.Element {
       {toasts.map((t) => (
         <div key={t.id} className={`toast ${t.kind}`}>
           {t.kind === 'error' ? <AlertCircle size={16} /> : t.kind === 'success' ? <CheckCircle2 size={16} /> : <Info size={16} />}
-          {t.text}
+          <span>{t.text}</span>
+          {t.kind === 'error' && (
+            <button
+              className="icon-btn sm"
+              title="Dismiss"
+              aria-label="Dismiss"
+              onClick={() => useEditor.setState((s) => ({ toasts: s.toasts.filter((x) => x.id !== t.id) }))}
+            >
+              <X size={14} />
+            </button>
+          )}
         </div>
       ))}
     </div>

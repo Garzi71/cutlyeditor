@@ -38,9 +38,11 @@ export default function Welcome(): React.JSX.Element {
       </div>
       <div className="welcome-body">
         <div className="welcome-inner">
-          <div>
+          <div className="welcome-head">
             <h1>Start creating</h1>
             <p className="sub">Every feature, free and on your own computer.</p>
+          </div>
+          <div className="welcome-col">
             {sys && !sys.ffmpegOk && (
               <div className="warn">
                 <AlertTriangle size={18} style={{ flexShrink: 0 }} />
@@ -105,8 +107,8 @@ export default function Welcome(): React.JSX.Element {
               </div>
             </div>
           </div>
-          <div>
-            <div className="card" style={{ marginTop: 88 }}>
+          <div className="welcome-col">
+            <div className="card">
               <h2>Recent projects</h2>
               {recent.length === 0 ? (
                 <div className="empty" style={{ padding: '20px 0' }}>
@@ -115,19 +117,21 @@ export default function Welcome(): React.JSX.Element {
               ) : (
                 <div className="recent">
                   {recent.map((r) => (
-                    <button key={r.path} className="recent-item" onClick={() => openProjectFile(r.path)}>
+                    <button key={r.path} className="recent-item" title={r.path} onClick={() => openProjectFile(r.path)}>
                       <div className="ri-icon">
                         <Clapperboard size={18} />
                       </div>
                       <div style={{ minWidth: 0 }}>
                         <b>{r.name}</b>
-                        <small>{r.path}</small>
+                        <small>Opened {ago(r.openedAt)}</small>
                       </div>
                     </button>
                   ))}
                 </div>
               )}
             </div>
+          </div>
+          <div className="welcome-wide">
             <TemplatesSection />
             <VersionRow />
           </div>
@@ -135,6 +139,24 @@ export default function Welcome(): React.JSX.Element {
       </div>
     </div>
   )
+}
+
+/** "Downloads" for C:\Users\me\Downloads\x.cutly */
+function folderOf(p: string): string {
+  const parts = p.split(/[\\/]/).filter(Boolean)
+  return parts.length > 1 ? parts[parts.length - 2] : p
+}
+
+function ago(t: number): string {
+  if (!t) return ''
+  const m = Math.round((Date.now() - t) / 60000)
+  if (m < 1) return 'just now'
+  if (m < 60) return `${m} min ago`
+  const h = Math.round(m / 60)
+  if (h < 24) return `${h} h ago`
+  const d = Math.round(h / 24)
+  if (d < 30) return d === 1 ? 'yesterday' : `${d} days ago`
+  return new Date(t).toLocaleDateString()
 }
 
 function VersionRow(): React.JSX.Element | null {
