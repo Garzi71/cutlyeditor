@@ -1,5 +1,5 @@
 // Export window: choose file, resolution, fps, codec, quality and GPU/CPU, then watch progress.
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { CheckCircle2, FolderOpen, X } from 'lucide-react'
 import type { ExportProgress, ExportSettings, SystemInfo } from '@shared/types'
 import { projectDuration } from '@shared/types'
@@ -7,8 +7,7 @@ import { player } from '../engine/player'
 import { useEditor } from '../store'
 import { RESOLUTIONS, formatShort } from '../lib/util'
 import { Segmented } from './Controls'
-import { renderTextLayers } from '../engine/exportText'
-import { prepareColorAssets } from '../engine/exportColor'
+import { runExport } from '../engine/exportRender'
 
 type Phase = 'setup' | 'running' | 'done' | 'error'
 
@@ -34,13 +33,8 @@ export default function ExportDialog(): React.JSX.Element {
       setSys(s)
       setUseGpu(s.nvenc)
     })
-    return window.api.onExportProgress((p) => {
-      setProgress(p)
-      if (p.done) setPhase('done')
-      else if (p.error) setPhase('error')
-      else if (p.cancelled) setPhase('setup')
-    })
   }, [])
+  const cancelled = useRef(false)
 
   const scale = res / short
   const width = Math.round((project.width * scale) / 2) * 2
@@ -58,23 +52,25 @@ export default function ExportDialog(): React.JSX.Element {
     if (!out) return
     setPhase('running')
     setProgress({ percent: 0 })
+    cancelled.current = false
     try {
-      const hasText = project.clips.some((c) => c.text)
-      if (hasText) setPreparing(0)
-      // renderTextLayers creates a fresh export temp folder, so it runs first.
-      const textLayers = await renderTextLayers(project, width, height, (f) => setPreparing(f))
-      const colorAssets = await prepareColorAssets(project, width)
-      setPreparing(null)
-      await window.api.startExport(project, {
-        outputPath: out, width, height, fps, codec, quality, useGpu, textLayers, colorAssets
-      })
+      await runExport(
+        project,
+        { outputPath: out, width, height, fps, codec, quality, useGpu },
+        (p) => setProgress({ percent: p.percent, fps: p.fps, etaSeconds: p.etaSeconds }),
+        () => cancelled.current
+      )
+      setPhase('done')
     } catch (e) {
-      setPreparing(null)
+      if (cancelled.current) {
+        setPhase('setup')
+        return
+      }
       setPhase('error')
-      setProgress({ percent: 0, error: (e as Error).message })
+      setProgress({ percent: 0, error: (e as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') })
     }
   }
-  const [preparing, setPreparing] = useState<number | null>(null)
+  const preparing: number | null = null
 
   const resOptions = [...new Set([...RESOLUTIONS.filter((r) => r <= Math.max(short, 1080) * 2), short])].sort((a, b) => a - b)
 
@@ -186,7 +182,7 @@ export default function ExportDialog(): React.JSX.Element {
               </div>
             </div>
             <div className="modal-foot">
-              <button className="btn" onClick={() => window.api.cancelExport()}>
+              <button className="btn" onClick={() => (cancelled.current = true)}>
                 Cancel export
               </button>
             </div>

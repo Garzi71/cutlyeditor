@@ -4,10 +4,10 @@ import { app, BrowserWindow, dialog, ipcMain, protocol, session, shell } from 'e
 import { createReadStream, promises as fs } from 'fs'
 import path from 'path'
 import { Readable } from 'stream'
-import type { ExportSettings, Project, RecentProject, TranscribeOptions } from '../shared/types'
-import { cancelExport, newTempDir, startExport, writeTempFile } from './exporter'
+import type { ExportSettings, FrameRequest, Project, RecentProject, TranscribeOptions } from '../shared/types'
+import { cancelExport, exportBegin, exportFinish, exportFrame, exportRelease, exportWrite } from './exporter'
 import { whisperCancel, whisperDownload, whisperStatus, whisperTranscribe } from './whisper'
-import { makePeaks, makeThumbnails, probe, sampleFrames, systemInfo } from './ffmpeg'
+import { makePeaks, makeReverseProxy, makeThumbnails, probe, sampleFrames, systemInfo } from './ffmpeg'
 import { initUpdater, installingUpdate } from './updater'
 
 // Developer aid: `CUTLY_DEBUG_PORT=9222 npm run dev` allows inspecting the UI from outside.
@@ -77,7 +77,9 @@ function createWindow(): void {
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
-      sandbox: false
+      sandbox: false,
+      // Exports render frames in the UI; keep full speed while the window is minimized.
+      backgroundThrottling: false
     }
   })
   win.once('ready-to-show', () => win?.show())
@@ -183,12 +185,21 @@ function registerIpc(): void {
     return r.canceled ? null : r.filePath
   })
 
-  ipcMain.handle('export:start', async (e, project: Project, settings: ExportSettings) => {
-    await startExport(project, settings, (p) => {
-      if (!e.sender.isDestroyed()) e.sender.send('export:progress', p)
-    })
+  // The UI renders frames and streams them here (see exporter.ts).
+  ipcMain.handle('export:begin', async (_e, project: Project, settings: ExportSettings) => {
+    // Reversed clips need their reversed copy (for the audio) before the encoder starts.
+    for (const c of project.clips) {
+      const m = project.media.find((x) => x.id === c.mediaId)
+      if (c.speed?.reverse && m && m.kind !== 'image') await makeReverseProxy(m.path, m.duration, m.hasAudio)
+    }
+    await exportBegin(project, settings)
   })
+  ipcMain.handle('export:frame', (_e, req: FrameRequest, time: number) => exportFrame(req, time))
+  ipcMain.handle('export:release', (_e, key: string) => exportRelease(key))
+  ipcMain.handle('export:write', (_e, frame: Uint8Array) => exportWrite(frame))
+  ipcMain.handle('export:finish', () => exportFinish())
   ipcMain.handle('export:cancel', () => cancelExport())
+  ipcMain.handle('media:reverse', (_e, file: string, duration: number, hasAudio: boolean) => makeReverseProxy(file, duration, hasAudio))
 
   ipcMain.handle('shell:showItem', (_e, p: string) => shell.showItemInFolder(p))
 
@@ -209,8 +220,6 @@ function registerIpc(): void {
   })
 
   // ---- text frames for export ----
-  ipcMain.handle('export:newTemp', () => newTempDir())
-  ipcMain.handle('export:writeTemp', (_e, name: string, data: Uint8Array) => writeTempFile(name, data))
 
   // ---- speech to text ----
   ipcMain.handle('whisper:status', () => whisperStatus())

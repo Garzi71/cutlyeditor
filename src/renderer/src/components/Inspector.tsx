@@ -7,17 +7,24 @@ import { commit, defaultTransform, updateClip, useEditor } from '../store'
 import { ASPECTS, RESOLUTIONS, aspectIdOf, formatBytes, formatTimecode, frameSize } from '../lib/util'
 import { NumberField, SliderField } from './Controls'
 import TextInspector from './TextInspector'
+import { EffectInspector, TransitionInspector } from './FxPanels'
 import ColorInspector from './ColorInspector'
+import { AnimatedPosition, AnimatedSlider, AnimationPanel, AudioFades, KeyframeTools, SpeedPanel } from './MotionPanels'
 
 export default function Inspector(): React.JSX.Element {
   const project = useEditor((s) => s.project)!
   const selection = useEditor((s) => s.selection)
+  const transitionSel = useEditor((s) => s.transitionSel)
   const clip = selection.length === 1 ? project.clips.find((c) => c.id === selection[0]) : undefined
   const media = clip ? project.media.find((m) => m.id === clip.mediaId) : undefined
 
   return (
     <div className="panel">
-      {clip?.text ? (
+      {transitionSel ? (
+        <TransitionInspector key={transitionSel} clipId={transitionSel} />
+      ) : clip?.effect ? (
+        <EffectInspector key={clip.id} clip={clip} />
+      ) : clip?.text ? (
         <TextInspector key={clip.id} clip={clip} />
       ) : clip?.adjustment ? (
         <>
@@ -45,24 +52,24 @@ export default function Inspector(): React.JSX.Element {
   )
 }
 
-type Tab = 'video' | 'color' | 'audio' | 'info'
+type Tab = 'video' | 'color' | 'anim' | 'speed' | 'audio' | 'info'
 let lastTab: Tab = 'video' // remembered when switching between clips
 
 function ClipInspector({ project, clip, media }: { project: Project; clip: Clip; media: MediaItem }): React.JSX.Element {
   const visual = media.kind !== 'audio'
   const hasSound = media.kind === 'audio' || media.hasAudio
-  const allowed: Tab[] = [...(visual ? (['video', 'color'] as Tab[]) : []), ...(hasSound ? (['audio'] as Tab[]) : []), 'info']
+  const canSpeed = media.kind !== 'image'
+  const allowed: Tab[] = [
+    ...(visual ? (['video', 'color', 'anim'] as Tab[]) : []),
+    ...(canSpeed ? (['speed'] as Tab[]) : []),
+    ...(hasSound ? (['audio'] as Tab[]) : []),
+    'info'
+  ]
   const [tab, setTabState] = useState<Tab>(allowed.includes(lastTab) ? lastTab : allowed[0])
   const setTab = (t: Tab): void => {
     lastTab = t
     setTabState(t)
   }
-  const tr = clip.transform
-  const set = (field: keyof Clip['transform'], v: number): void =>
-    updateClip(clip.id, (c) => {
-      c.transform[field] = v
-    }, `tr-${clip.id}-${field}`)
-
   return (
     <>
       <div className="insp-tabs">
@@ -74,6 +81,16 @@ function ClipInspector({ project, clip, media }: { project: Project; clip: Clip;
         {visual && (
           <button className={`insp-tab ${tab === 'color' ? 'active' : ''}`} onClick={() => setTab('color')}>
             Color
+          </button>
+        )}
+        {visual && (
+          <button className={`insp-tab ${tab === 'anim' ? 'active' : ''}`} onClick={() => setTab('anim')}>
+            Animation
+          </button>
+        )}
+        {canSpeed && (
+          <button className={`insp-tab ${tab === 'speed' ? 'active' : ''}`} onClick={() => setTab('speed')}>
+            Speed
           </button>
         )}
         {hasSound && (
@@ -99,62 +116,21 @@ function ClipInspector({ project, clip, media }: { project: Project; clip: Clip;
                 <RotateCcw size={14} />
               </button>
             </div>
-            <div className="field">
-              <label>Scale</label>
-              <SliderField
-                value={tr.scale}
-                min={0.05}
-                max={4}
-                step={1}
-                suffix="%"
-                display={(v) => Math.round(v * 100)}
-                parse={(v) => v / 100}
-                onChange={(v) => set('scale', v)}
-              />
-            </div>
-            <div className="field">
-              <label>Position</label>
-              <div className="field-row">
-                <NumberField label="X" value={tr.x} onChange={(v) => set('x', v)} />
-                <NumberField label="Y" value={tr.y} onChange={(v) => set('y', v)} />
-              </div>
-            </div>
-            <div className="field">
-              <label>Rotate</label>
-              <SliderField value={tr.rotation} min={-180} max={180} suffix="°" onChange={(v) => set('rotation', v)} />
-            </div>
-            <div className="field">
-              <label>Opacity</label>
-              <SliderField
-                value={tr.opacity}
-                min={0}
-                max={1}
-                suffix="%"
-                display={(v) => Math.round(v * 100)}
-                parse={(v) => v / 100}
-                onChange={(v) => set('opacity', v)}
-              />
-            </div>
+            <AnimatedSlider clip={clip} prop="scale" label="Scale" min={0.05} max={4} suffix="%" display={(v) => Math.round(v * 100)} parse={(v) => v / 100} />
+            <AnimatedPosition clip={clip} />
+            <AnimatedSlider clip={clip} prop="rotation" label="Rotate" min={-180} max={180} suffix="°" />
+            <AnimatedSlider clip={clip} prop="opacity" label="Opacity" min={0} max={1} suffix="%" display={(v) => Math.round(v * 100)} parse={(v) => v / 100} />
+            <KeyframeTools clip={clip} props={['x', 'y', 'scale', 'rotation', 'opacity']} />
           </div>
         )}
+        {tab === 'anim' && visual && <AnimationPanel clip={clip} />}
+        {tab === 'speed' && canSpeed && <SpeedPanel clip={clip} />}
         {tab === 'audio' && hasSound && (
           <div className="section">
             <div className="section-title">Basic</div>
-            <div className="field">
-              <label>Volume</label>
-              <SliderField
-                value={clip.volume}
-                min={0}
-                max={2}
-                suffix="%"
-                display={(v) => Math.round(v * 100)}
-                parse={(v) => v / 100}
-                onChange={(v) => updateClip(clip.id, (c) => void (c.volume = v), `vol-${clip.id}`)}
-              />
-            </div>
-            <p className="hint" style={{ marginTop: -4 }}>
-              Fades, noise reduction and voice enhancement are coming in later phases.
-            </p>
+            <AnimatedSlider clip={clip} prop="volume" label="Volume" min={0} max={2} suffix="%" display={(v) => Math.round(v * 100)} parse={(v) => v / 100} />
+            <KeyframeTools clip={clip} props={['volume']} />
+            <AudioFades clip={clip} />
           </div>
         )}
         {tab === 'info' && (

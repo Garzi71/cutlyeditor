@@ -1,6 +1,7 @@
 // Draws text clips. The same code renders the live preview and the exported video,
 // so captions look identical in both.
 import type { Clip, TextData, TextStyle } from '@shared/types'
+import type { Pose } from '@shared/motion'
 
 export const DEFAULT_TEXT_STYLE: TextStyle = {
   font: 'Montserrat',
@@ -115,17 +116,23 @@ export function drawTextClip(
   localTime: number,
   canvasW: number,
   canvasH: number,
-  k: number
+  k: number,
+  pose?: Pose
 ): void {
   const data = clip.text
   if (!data || !data.content.trim()) return
   const s = data.style
-  const tr = clip.transform
+  const tr = pose ?? { ...clip.transform, blur: 0, reveal: 1 }
   const layout = layoutText(data, canvasW, k)
   const lit = activeWord(data, localTime)
+  // Typewriter: only the first characters are shown (layout stays the same, so nothing jumps).
+  const totalChars = layout.lines.reduce((a, l) => a + l.tokens.reduce((b, t) => b + t.text.length + 1, 0), 0)
+  let charsLeft = tr.reveal >= 1 ? Infinity : Math.floor(totalChars * tr.reveal)
+  const charBudget = charsLeft
 
   ctx.save()
   ctx.globalAlpha = tr.opacity
+  if (tr.blur > 0) ctx.filter = `blur(${(tr.blur * k).toFixed(2)}px)`
   ctx.translate(canvasW / 2 + tr.x * k, canvasH / 2 + tr.y * k)
   ctx.rotate((tr.rotation * Math.PI) / 180)
   ctx.scale(tr.scale, tr.scale)
@@ -152,16 +159,20 @@ export function drawTextClip(
   ctx.miterLimit = 2
 
   const drawPass = (pass: 'stroke' | 'fill'): void => {
+    charsLeft = charBudget
     layout.lines.forEach((line, li) => {
       const y = top + pad + lineHeight * (li + 0.5)
       let x =
         s.align === 'left' ? left + pad : s.align === 'right' ? left + width - pad - line.width : -line.width / 2
       for (const t of line.tokens) {
+        if (charsLeft <= 0) return
+        const text = charsLeft < t.text.length ? t.text.slice(0, charsLeft) : t.text
+        charsLeft -= t.text.length + 1
         if (pass === 'stroke') {
-          ctx.strokeText(t.text, x, y)
+          ctx.strokeText(text, x, y)
         } else {
           ctx.fillStyle = t.wordIndex >= 0 && t.wordIndex === lit ? s.highlight : s.color
-          ctx.fillText(t.text, x, y)
+          ctx.fillText(text, x, y)
         }
         x += t.width + layout.spaceWidth
       }

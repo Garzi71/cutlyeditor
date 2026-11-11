@@ -1,21 +1,48 @@
-// Real-time preview: keeps one <video>/<audio> element per clip near the playhead,
-// keeps them in sync with a master clock and composites the frame onto a canvas.
+// Real-time preview: keeps one <video>/<audio> element per clip near the playhead, keeps them in sync
+// with a master clock (speed, ramps, reverse, transition overlaps) and draws frames with the compositor.
 import type { Clip, MediaItem, Project } from '@shared/types'
-import { clipEnd, fitSize, projectDuration } from '@shared/types'
-import { useEditor } from '../store'
+import { clipEnd, projectDuration } from '@shared/types'
+import { rateAt, sourceTimeAt, speedOf } from '@shared/timing'
+import { volumeAt } from '@shared/motion'
+import { toast, useEditor } from '../store'
 import { mediaUrl } from '../lib/util'
-import { drawTextClip } from './text'
-import { gradeIsActive } from './color'
-import { colorProcessor } from './gl'
+import { renderFrame, visibleSpan } from './compositor'
 
 interface ClipSource {
   el: HTMLVideoElement | HTMLAudioElement
   gain: GainNode | null
-  mediaId: string
+  key: string // media path (or reverse proxy path) the element plays
 }
 
 const PRELOAD_WINDOW = 3 // seconds ahead/behind the playhead that elements are kept alive
 const DRIFT_PLAYING = 0.25
+const MIN_RATE = 0.0625 // HTMLMediaElement limits
+const MAX_RATE = 16
+
+// ---------- reversed copies of media (for reverse playback) ----------
+
+const proxies = new Map<string, string | 'pending' | 'error'>()
+
+/** Path of the reversed copy of a media file, starting its creation if needed (null while not ready). */
+export function reverseProxy(m: MediaItem): string | null {
+  const hit = proxies.get(m.path)
+  if (hit && hit !== 'pending' && hit !== 'error') return hit
+  if (!hit) {
+    proxies.set(m.path, 'pending')
+    toast(`Preparing reverse playback of ${m.name}…`, 'info')
+    window.api
+      .reverseProxy(m.path, m.duration, m.hasAudio)
+      .then((p) => {
+        proxies.set(m.path, p)
+        toast(`Reverse ready: ${m.name}`, 'success')
+      })
+      .catch((e) => {
+        proxies.set(m.path, 'error')
+        toast(`Could not reverse ${m.name}: ${(e as Error).message}`, 'error')
+      })
+  }
+  return null
+}
 
 class Player {
   private canvas: HTMLCanvasElement | null = null
@@ -89,7 +116,8 @@ class Player {
 
   // ---------- main loop ----------
 
-  private tick(): void {
+  /** Advance the clock, sync media elements and draw one frame. */
+  tick(force = false): void {
     const st = useEditor.getState()
     const p = st.project
     if (!p) {
@@ -109,24 +137,37 @@ class Player {
       }
     }
     this.syncSources(p, t, st.playing)
-    this.draw(p, t)
+    // Nothing to see while the window is hidden (saves GPU, e.g. during a long export).
+    if (document.hidden && !force) return
+    if (this.ctx && this.canvas) {
+      if (this.canvas.width !== p.width || this.canvas.height !== p.height) {
+        this.canvas.width = p.width
+        this.canvas.height = p.height
+      }
+      renderFrame(this.ctx, p, t, p.width, p.height, (c, m) => this.frameOf(c, m))
+    }
     if (++this.frame % 60 === 0) this.collect(p, t)
   }
 
-  private mediaOf(p: Project, c: Clip): MediaItem | undefined {
-    return p.media.find((m) => m.id === c.mediaId)
+  private frameOf(c: Clip, m: MediaItem): CanvasImageSource | null {
+    if (m.kind === 'image') {
+      const img = this.image(m)
+      return img.complete && img.naturalWidth ? img : null
+    }
+    const s = this.sources.get(c.id)
+    return s && (s.el as HTMLVideoElement).readyState >= 2 ? (s.el as HTMLVideoElement) : null
   }
 
-  private source(c: Clip, m: MediaItem): ClipSource {
+  private source(c: Clip, m: MediaItem, key: string): ClipSource {
     let s = this.sources.get(c.id)
-    if (s && s.mediaId === m.id) return s
+    if (s && s.key === key) return s
     if (s) this.dispose(c.id)
     const el = m.kind === 'audio' ? new Audio() : document.createElement('video')
     el.crossOrigin = 'anonymous'
     el.preload = 'auto'
+    el.preservesPitch = true
     if (el instanceof HTMLVideoElement) el.playsInline = true
-    el.src = mediaUrl(m.path)
-    el.currentTime = c.in
+    el.src = mediaUrl(key)
     let gain: GainNode | null = null
     if (!this.audioCtx) this.audioCtx = new AudioContext()
     if (m.kind === 'audio' || m.hasAudio) {
@@ -138,7 +179,7 @@ class Player {
         gain = null
       }
     }
-    s = { el, gain, mediaId: m.id }
+    s = { el, gain, key }
     this.sources.set(c.id, s)
     return s
   }
@@ -156,94 +197,63 @@ class Player {
 
   private syncSources(p: Project, t: number, playing: boolean): void {
     for (const c of p.clips) {
-      const m = this.mediaOf(p, c)
-      if (!m || m.kind === 'image') continue
-      const end = clipEnd(c)
-      const near = t >= c.start - PRELOAD_WINDOW && t < end + 0.5
-      if (!near) continue
-      const s = this.source(c, m)
-      const el = s.el
+      const m = p.media.find((x) => x.id === c.mediaId)
+      if (!m || m.kind === 'image' || c.text || c.adjustment || c.effect) continue
       const track = p.tracks.find((tr) => tr.id === c.trackId)
-      const active = t >= c.start && t < end
-      const audible = !track?.muted && c.volume > 0
-      if (s.gain) s.gain.gain.value = audible ? c.volume : 0
-      else el.volume = audible ? Math.min(1, c.volume) : 0
+      const [vs, ve] = m.kind === 'video' && !track?.hidden ? visibleSpan(p, c) : [c.start, clipEnd(c)]
+      const near = t >= vs - PRELOAD_WINDOW && t < ve + 0.5
+      if (!near) continue
 
-      if (active) {
-        const want = c.in + (t - c.start)
-        if (playing) {
-          if (el.paused) {
-            if (Math.abs(el.currentTime - want) > 0.05) el.currentTime = want
-            el.play().catch(() => {})
-          } else if (Math.abs(el.currentTime - want) > DRIFT_PLAYING) {
-            el.currentTime = want
-          }
-        } else {
-          if (!el.paused) el.pause()
-          if (!el.seeking && Math.abs(el.currentTime - want) > 0.5 / p.fps) el.currentTime = want
+      const sp = speedOf(c)
+      let key = m.path
+      let reversed = false
+      if (sp.reverse) {
+        const proxy = reverseProxy(m)
+        if (proxy) {
+          key = proxy
+          reversed = true
+        }
+      }
+      const s = this.source(c, m, key)
+      const el = s.el
+      const tau = t - c.start
+      const audible = t >= c.start && t < clipEnd(c) && !track?.muted
+      const vol = audible ? volumeAt(c, tau) : 0
+      if (s.gain) s.gain.gain.value = vol
+      else el.volume = Math.min(1, vol)
+
+      const active = t >= vs && t < ve
+      if (!active) {
+        if (!el.paused) el.pause()
+        // Get the first frame ready just before the clip appears.
+        const first = this.elementTime(c, m, vs - c.start, reversed)
+        if (t < vs && !el.seeking && Math.abs(el.currentTime - first) > 0.05) el.currentTime = first
+        continue
+      }
+      const want = this.elementTime(c, m, tau, reversed)
+      // Playing forward through the file at this rate (a reversed proxy also plays forward).
+      const rate = sp.reverse && !reversed ? -1 : rateAt(c, tau)
+      const smooth = playing && rate >= MIN_RATE && rate <= MAX_RATE && want > 0.02 && want < m.duration - 0.05
+      if (smooth) {
+        if (Math.abs(el.playbackRate - rate) > 0.01) el.playbackRate = rate
+        if (el.paused) {
+          if (Math.abs(el.currentTime - want) > 0.05) el.currentTime = want
+          el.play().catch(() => {})
+        } else if (Math.abs(el.currentTime - want) > DRIFT_PLAYING * Math.max(1, rate)) {
+          el.currentTime = want
         }
       } else {
+        // Paused, extreme speeds, reverse without its copy, or frozen frames: show the exact frame.
         if (!el.paused) el.pause()
-        // Get the first frame ready just before the clip starts.
-        if (t < c.start && !el.seeking && Math.abs(el.currentTime - c.in) > 0.05) el.currentTime = c.in
+        if (!el.seeking && Math.abs(el.currentTime - want) > 0.5 / p.fps) el.currentTime = want
       }
     }
   }
 
-  private draw(p: Project, t: number): void {
-    const canvas = this.canvas
-    const ctx = this.ctx
-    if (!canvas || !ctx) return
-    if (canvas.width !== p.width || canvas.height !== p.height) {
-      canvas.width = p.width
-      canvas.height = p.height
-    }
-    ctx.fillStyle = p.background
-    ctx.fillRect(0, 0, p.width, p.height)
-    const videoTracks = p.tracks.filter((tr) => tr.kind === 'video' && !tr.hidden).reverse()
-    for (const track of videoTracks) {
-      for (const c of p.clips) {
-        if (c.trackId !== track.id || t < c.start || t >= clipEnd(c)) continue
-        if (c.text) {
-          drawTextClip(ctx, c, c.in + (t - c.start), p.width, p.height, 1)
-          continue
-        }
-        if (c.adjustment) {
-          // Adjustment layer: re-color everything drawn so far.
-          const proc = gradeIsActive(c.color) ? colorProcessor() : null
-          if (proc && this.canvas) ctx.drawImage(proc.process(this.canvas, p.width, p.height, c.color!), 0, 0, p.width, p.height)
-          continue
-        }
-        const m = this.mediaOf(p, c)
-        if (!m || m.kind === 'audio') continue
-        let src: CanvasImageSource | null = null
-        if (m.kind === 'image') {
-          const img = this.image(m)
-          if (img.complete && img.naturalWidth) src = img
-        } else {
-          const s = this.sources.get(c.id)
-          if (s && (s.el as HTMLVideoElement).readyState >= 2) src = s.el as HTMLVideoElement
-        }
-        if (!src) continue
-        const tr = c.transform
-        const fit = fitSize(m.width, m.height, p.width, p.height)
-        const w = fit.w * tr.scale
-        const h = fit.h * tr.scale
-        if (gradeIsActive(c.color)) {
-          const proc = colorProcessor()
-          // Process at most at the size it is drawn (cheaper), never larger than the source.
-          const pw = Math.min(m.width || w, w, 2560)
-          const ph = pw * (h / w)
-          if (proc) src = proc.process(src, pw, ph, c.color!)
-        }
-        ctx.save()
-        ctx.globalAlpha = tr.opacity
-        ctx.translate(p.width / 2 + tr.x, p.height / 2 + tr.y)
-        ctx.rotate((tr.rotation * Math.PI) / 180)
-        ctx.drawImage(src, -w / 2, -h / 2, w, h)
-        ctx.restore()
-      }
-    }
+  /** Position in the element's file for clip time tau (frozen at the media's ends). */
+  private elementTime(c: Clip, m: MediaItem, tau: number, reversedFile: boolean): number {
+    const src = Math.min(Math.max(0, sourceTimeAt(c, tau)), Math.max(0, m.duration - 0.04))
+    return reversedFile ? Math.max(0, m.duration - src) : src
   }
 
   /** Free elements of clips that are far from the playhead or were deleted. */

@@ -2,8 +2,11 @@
 // Every change to the project goes through `commit`, which records undo history.
 import { create } from 'zustand'
 import { produce, type Draft } from 'immer'
-import type { Clip, ColorGrade, MediaAssets, MediaItem, Project, TextData, TextStyle, Track, TrackKind } from '@shared/types'
-import { clipEnd } from '@shared/types'
+import type {
+  AnimProp, Clip, ColorGrade, Easing, EffectType, Keyframe, MediaAssets, MediaItem, Project, SpeedSettings, TextData, TextStyle, Track, TrackKind
+} from '@shared/types'
+import { clipDuration, clipEnd } from '@shared/types'
+import { splitTiming } from '@shared/timing'
 import { uid } from './lib/util'
 
 type Recipe = (d: Draft<Project>) => void
@@ -25,6 +28,8 @@ interface EditorState {
 
   assets: Record<string, MediaAssets>
   selection: string[]
+  /** Clip id whose incoming transition is selected (shown in the inspector). */
+  transitionSel: string | null
   playhead: number
   playing: boolean
   pxPerSec: number
@@ -44,6 +49,7 @@ export const useEditor = create<EditorState>(() => ({
   lastTime: 0,
   assets: {},
   selection: [],
+  transitionSel: null,
   playhead: 0,
   playing: false,
   pxPerSec: 60,
@@ -510,6 +516,146 @@ export function addAdjustmentLayer(grade: ColorGrade, opts: { start?: number; du
   set({ selection: [id] })
 }
 
+// ---------------- motion ----------------
+
+const KF_EPS = 1 / 120
+
+/** Keyframe at clip time tau (within half a frame), if any. */
+export function keyframeAt(c: Clip, prop: AnimProp, tau: number): Keyframe | undefined {
+  return c.keyframes?.[prop]?.find((k) => Math.abs(k.t - tau) < KF_EPS)
+}
+
+/**
+ * Set a property at clip time tau. Without keyframes this changes the clip's base value; once the
+ * property is animated it adds or updates a keyframe at tau (like CapCut).
+ */
+export function setAnimated(id: string, prop: AnimProp, tau: number, value: number, key?: string): void {
+  setAnimatedValues(id, { [prop]: value }, tau, key)
+}
+
+/** Several properties in one undo step (e.g. x and y while dragging in the player). */
+export function setAnimatedValues(id: string, values: Partial<Record<AnimProp, number>>, tau: number, key?: string): void {
+  commit((d) => {
+    const c = d.clips.find((x) => x.id === id)
+    if (!c) return
+    for (const [prop, value] of Object.entries(values) as [AnimProp, number][]) {
+      const list = c.keyframes?.[prop]
+      if (!list || list.length === 0) {
+        if (prop === 'volume') c.volume = value
+        else c.transform[prop] = value
+        continue
+      }
+      const hit = list.find((k) => Math.abs(k.t - tau) < KF_EPS)
+      if (hit) hit.v = value
+      else {
+        list.push({ t: tau, v: value, ease: 'easeInOut' })
+        list.sort((a, b) => a.t - b.t)
+      }
+    }
+  }, key)
+}
+
+/** Add a keyframe with the current value at tau, or remove the one there. */
+export function toggleKeyframe(id: string, prop: AnimProp, tau: number, currentValue: number): void {
+  commit((d) => {
+    const c = d.clips.find((x) => x.id === id)
+    if (!c) return
+    c.keyframes = c.keyframes ?? {}
+    const list = c.keyframes[prop] ?? []
+    const i = list.findIndex((k) => Math.abs(k.t - tau) < KF_EPS)
+    if (i >= 0) list.splice(i, 1)
+    else {
+      list.push({ t: tau, v: currentValue, ease: 'easeInOut' })
+      list.sort((a, b) => a.t - b.t)
+    }
+    if (list.length) c.keyframes[prop] = list
+    else {
+      delete c.keyframes[prop]
+      // Keep the value the property had at this moment.
+      if (prop === 'volume') c.volume = currentValue
+      else c.transform[prop] = currentValue
+    }
+  })
+}
+
+export function setKeyframeEase(id: string, prop: AnimProp, tau: number, ease: Easing): void {
+  commit((d) => {
+    const k = d.clips.find((x) => x.id === id)?.keyframes?.[prop]?.find((f) => Math.abs(f.t - tau) < KF_EPS)
+    if (k) k.ease = ease
+  })
+}
+
+export function clearKeyframes(id: string, prop?: AnimProp): void {
+  commit((d) => {
+    const c = d.clips.find((x) => x.id === id)
+    if (!c?.keyframes) return
+    if (prop) delete c.keyframes[prop]
+    else delete c.keyframes
+  })
+}
+
+/**
+ * Change a clip's speed. The clip keeps its start; if it gets longer and would overlap the next clip
+ * on its track, the following clips move right by that amount (ripple), so nothing overlaps.
+ */
+export function setSpeed(id: string, speed: SpeedSettings | undefined, key?: string): void {
+  commit((d) => {
+    const c = d.clips.find((x) => x.id === id) as Clip | undefined
+    if (!c) return
+    const oldEnd = clipEnd(c)
+    c.speed = speed ? JSON.parse(JSON.stringify(speed)) : undefined
+    const newEnd = clipEnd(c)
+    const later = d.clips.filter((x) => x.trackId === c.trackId && x.id !== c.id && x.start >= oldEnd - 0.05)
+    const firstLater = later.reduce((a, x) => Math.min(a, x.start), Infinity)
+    const push = newEnd - firstLater
+    if (push > 0) for (const x of later) x.start += push
+  }, key)
+}
+
+export function setTransition(clipId: string, transition: Clip['transitionIn'] | null, key?: string): void {
+  commit((d) => {
+    const c = d.clips.find((x) => x.id === clipId)
+    if (!c) return
+    if (transition) c.transitionIn = { ...transition }
+    else delete c.transitionIn
+  }, key)
+}
+
+export const EFFECT_DEFAULT_DURATION = 3
+
+export function addEffectLayer(type: EffectType, opts: { start?: number; duration?: number } = {}): void {
+  const { project, playhead } = get()
+  if (!project) return
+  const start = Math.max(0, opts.start ?? playhead)
+  const dur = opts.duration ?? EFFECT_DEFAULT_DURATION
+  const id = uid()
+  commit((d) => {
+    const main = mainTrack(d, 'video')
+    const own = d.tracks.find(
+      (t) =>
+        t.kind === 'video' &&
+        t.id !== main?.id &&
+        !t.locked &&
+        d.clips.some((c) => c.trackId === t.id) &&
+        d.clips.filter((c) => c.trackId === t.id).every((c) => !!c.effect) &&
+        !overlaps(d.clips as Clip[], t.id, start, start + dur)
+    ) as Track | undefined
+    const track = own ?? insertTrack(d, 'video')
+    d.clips.push({
+      id,
+      trackId: track.id,
+      mediaId: '',
+      effect: { type, intensity: 0.6 },
+      start,
+      in: 0,
+      out: dur,
+      volume: 1,
+      transform: defaultTransform()
+    })
+  })
+  set({ selection: [id] })
+}
+
 export function updateClip(id: string, recipe: (c: Draft<Clip>) => void, key?: string): void {
   commit((d) => {
     const c = d.clips.find((x) => x.id === id)
@@ -536,9 +682,20 @@ export function splitAt(t: number): void {
     for (const tc of targets) {
       const c = d.clips.find((x) => x.id === tc.id)
       if (!c) continue
-      const cut = c.in + (t - c.start)
-      const right: Clip = { ...JSON.parse(JSON.stringify(c)), id: uid(), start: t, in: cut }
-      c.out = cut
+      const tau = t - c.start
+      const { left, right: r } = splitTiming(c as Clip, tau)
+      const right: Clip = { ...JSON.parse(JSON.stringify(c)), id: uid(), ...r }
+      Object.assign(c, left)
+      // Keyframes keep their place in the picture: the right half's clip time starts at the cut.
+      if (right.keyframes) {
+        for (const k of Object.keys(right.keyframes) as AnimProp[]) right.keyframes[k] = right.keyframes[k]!.map((f) => ({ ...f, t: f.t - tau }))
+      }
+      // The start of the clip stays with the left half, the end with the right half.
+      delete right.transitionIn
+      delete right.animIn
+      delete right.fadeIn
+      delete c.animOut
+      delete c.fadeOut
       d.clips.push(right)
       newIds.push(right.id)
     }
@@ -564,7 +721,7 @@ export function duplicateSelection(): void {
     for (const id of selection) {
       const c = d.clips.find((x) => x.id === id)
       if (!c) continue
-      const dur = c.out - c.in
+      const dur = clipDuration(c as Clip)
       const copy: Clip = { ...JSON.parse(JSON.stringify(c)), id: uid() }
       copy.start = findFreeStart(d.clips as Clip[], c.trackId, clipEnd(c), dur)
       d.clips.push(copy)
@@ -583,3 +740,12 @@ export function select(id: string | null, additive = false): void {
     set({ selection: [id] })
   }
 }
+
+export function selectTransition(clipId: string | null): void {
+  set({ selection: [], transitionSel: clipId })
+}
+
+// Selecting a clip deselects a transition.
+useEditor.subscribe((s, prev) => {
+  if (s.selection !== prev.selection && s.selection.length && s.transitionSel) set({ transitionSel: null })
+})

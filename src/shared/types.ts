@@ -1,4 +1,5 @@
 // Data model shared by the main process (export) and the renderer (UI).
+import { timelineDuration } from './timing'
 // Times are always in seconds.
 
 export type MediaKind = 'video' | 'audio' | 'image'
@@ -109,15 +110,60 @@ export interface ColorGrade {
   match?: { gain: [number, number, number]; offset: [number, number, number]; ref: string }
 }
 
+// ---------- motion ----------
+
+export type Easing = 'linear' | 'easeIn' | 'easeOut' | 'easeInOut' | 'hold'
+
+/** `t` = seconds from the clip's start on the timeline. */
+export interface Keyframe {
+  t: number
+  v: number
+  ease: Easing
+}
+
+export const ANIM_PROPS = ['x', 'y', 'scale', 'rotation', 'opacity', 'volume'] as const
+export type AnimProp = (typeof ANIM_PROPS)[number]
+
+export interface SpeedSettings {
+  rate: number // constant speed (ignored while a curve is set)
+  /** Speed ramp: [progress 0..1 through the played source, speed multiplier]. */
+  curve?: [number, number][]
+  curveName?: string
+  reverse?: boolean
+}
+
+export const TRANSITIONS = [
+  'dissolve', 'dipBlack', 'dipWhite', 'pushLeft', 'pushRight', 'pushUp', 'pushDown',
+  'wipeLeft', 'wipeRight', 'wipeUp', 'wipeDown', 'zoom', 'blur', 'circle', 'spin'
+] as const
+export type TransitionType = (typeof TRANSITIONS)[number]
+
+export const CLIP_ANIMS = ['fade', 'zoomIn', 'zoomOut', 'slideLeft', 'slideRight', 'slideUp', 'slideDown', 'pop', 'spin', 'blur', 'typewriter'] as const
+export type ClipAnimType = (typeof CLIP_ANIMS)[number]
+
+export const EFFECTS = ['blur', 'shake', 'glitch', 'flash', 'vhs', 'grain', 'rgbSplit', 'mirror', 'zoomPulse', 'pixelate'] as const
+export type EffectType = (typeof EFFECTS)[number]
+
 export interface Clip {
   id: string
   trackId: string
-  /** Empty for text clips and adjustment layers. */
+  /** Empty for text clips, adjustment and effect layers. */
   mediaId: string
   text?: TextData
   /** Adjustment layer: colors everything below it on the timeline while it is active. */
   adjustment?: boolean
+  /** Effect layer: applies a video effect to everything below it while active. */
+  effect?: { type: EffectType; intensity: number } // 0..1
   color?: ColorGrade
+  speed?: SpeedSettings
+  keyframes?: Partial<Record<AnimProp, Keyframe[]>>
+  /** Transition from the previous clip on the same track (which must end where this one starts). */
+  transitionIn?: { type: TransitionType; duration: number }
+  animIn?: { type: ClipAnimType; duration: number }
+  animOut?: { type: ClipAnimType; duration: number }
+  /** Audio fades in seconds. */
+  fadeIn?: number
+  fadeOut?: number
   start: number // position on the timeline
   in: number // start inside the source media
   out: number // end inside the source media
@@ -137,10 +183,10 @@ export interface Project {
   clips: Clip[]
 }
 
-export type ClipKind = MediaKind | 'text' | 'adjustment'
+export type ClipKind = MediaKind | 'text' | 'adjustment' | 'effect'
 
 /** Clips that are not backed by a media file. */
-export const isGenerated = (c: Clip): boolean => !!c.text || !!c.adjustment
+export const isGenerated = (c: Clip): boolean => !!c.text || !!c.adjustment || !!c.effect
 
 const evenPx = (n: number): number => Math.max(2, Math.round(n / 2) * 2)
 
@@ -152,13 +198,15 @@ export function clipOutputSize(p: Project, m: MediaItem, c: Clip, W: number): { 
 }
 
 export function clipKind(p: Project, c: Clip): ClipKind | null {
+  if (c.effect) return 'effect'
   if (c.adjustment) return 'adjustment'
   if (c.text) return 'text'
   return p.media.find((m) => m.id === c.mediaId)?.kind ?? null
 }
 
-export const clipDuration = (c: Clip): number => c.out - c.in
-export const clipEnd = (c: Clip): number => c.start + c.out - c.in
+/** Duration on the timeline (takes speed into account). */
+export const clipDuration = (c: Clip): number => timelineDuration(c)
+export const clipEnd = (c: Clip): number => c.start + timelineDuration(c)
 
 export function projectDuration(p: Project): number {
   return p.clips.reduce((m, c) => Math.max(m, clipEnd(c)), 0)
@@ -179,21 +227,17 @@ export interface ExportSettings {
   codec: 'h264' | 'hevc'
   quality: 'high' | 'medium' | 'low'
   useGpu: boolean
-  /** Pre-rendered text, one transparent PNG sequence per video track (rendered by the UI). */
-  textLayers?: TextLayer[]
-  /** Per clip color files prepared by the UI (file names inside the export temp folder). */
-  colorAssets?: Record<string, ColorAsset>
 }
 
-export interface ColorAsset {
-  lut?: string // .cube file name
-  vignette?: string // PNG mask file name, sized like the clip's output
-  sharpen?: number // 0..100
-}
-
-export interface TextLayer {
-  trackId: string
-  segments: { png: string; duration: number }[]
+/** The export asks the main process for source frames of a clip with this. */
+export interface FrameRequest {
+  key: string // one decoder per key
+  kind: 'video' | 'image'
+  path: string // media file, or its reversed copy
+  start: number // first source time to decode (seconds in `path`)
+  step: number // source seconds between decoded frames
+  w: number
+  h: number
 }
 
 // ---------- speech to text ----------

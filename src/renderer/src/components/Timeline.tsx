@@ -1,19 +1,23 @@
 // Bottom panel: multi-track timeline with ruler, playhead, clip move/trim, snapping and zoom.
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Copy, Eye, EyeOff, Film, Lock, Magnet, Maximize2, Music, Palette, Redo2, Scissors, SlidersHorizontal, Trash2, Type, Undo2, Unlock, Volume2,
+  Blend, Copy, Eye, EyeOff, Film, Lock, Magnet, Maximize2, Music, Palette, Plus, Redo2, Scissors, SlidersHorizontal, Sparkles, Trash2, Type, Undo2,
+  Unlock, Volume2,
   VolumeX, ZoomIn, ZoomOut
 } from 'lucide-react'
-import type { Clip, MediaAssets, MediaItem, Track, TrackKind } from '@shared/types'
+import type { AnimProp, Clip, MediaAssets, MediaItem, Track, TrackKind } from '@shared/types'
 import { PEAKS_PER_SECOND, clipDuration, clipEnd, projectDuration } from '@shared/types'
 import { player } from '../engine/player'
 import {
-  addClip, commit, deleteSelection, duplicateSelection, findFreeStart, importPaths, insertTrack, isClipLocked,
+  addClip, commit, deleteSelection, duplicateSelection, findFreeStart, importPaths, insertTrack, isClipLocked, selectTransition, setTransition,
   mainTrack, orderedTracks, overlaps, pruneTracks, redo, select, splitAt, toggleTrack, undo, updateClip, useEditor
 } from '../store'
 import { clamp, formatShort, mediaUrl } from '../lib/util'
 import { gradeIsActive } from '../engine/color'
+import { adjustPlayed, rateAt, sourceTimeAt, speedOf } from '@shared/timing'
 import { FILTERS } from '../engine/filters'
+import { previousClip } from '../engine/compositor'
+import { DEFAULT_TRANSITION, EFFECT_NAMES } from './FxPanels'
 
 const HEADER_W = 132
 const RULER_H = 28
@@ -34,6 +38,7 @@ export default function Timeline(): React.JSX.Element {
   const pps = useEditor((s) => s.pxPerSec)
   const snapping = useEditor((s) => s.snapping)
   const selection = useEditor((s) => s.selection)
+  const transitionSel = useEditor((s) => s.transitionSel)
   const assets = useEditor((s) => s.assets)
   const canUndo = useEditor((s) => s.past.length > 0)
   const canRedo = useEditor((s) => s.future.length > 0)
@@ -140,7 +145,7 @@ export default function Timeline(): React.JSX.Element {
     if (!orig) return
     select(clipId, e.shiftKey || e.ctrlKey)
     if (isClipLocked(p, orig)) return
-    const m = orig.text || orig.adjustment ? TEXT_MEDIA : p.media.find((x) => x.id === orig.mediaId)
+    const m = orig.text || orig.adjustment || orig.effect ? TEXT_MEDIA : p.media.find((x) => x.id === orig.mediaId)
     if (!m) return
     const kind: TrackKind = m.kind === 'audio' ? 'audio' : 'video'
     const pps0 = st.pxPerSec
@@ -205,35 +210,46 @@ export default function Timeline(): React.JSX.Element {
           c.start = ns
           c.trackId = trackId
         }, key)
-      } else if (mode === 'l') {
-        const minIn = m.kind === 'image' ? -Infinity : 0
-        const lo = Math.max(minIn, orig.in - (orig.start - prevEnd))
-        const hi = orig.out - MIN_CLIP
-        let ni = clamp(orig.in + dt, lo, hi)
-        const sn = snap(orig.start + (ni - orig.in))
-        if (sn !== null) {
-          const cand = orig.in + (sn - orig.start)
-          if (cand >= lo && cand <= hi) ni = cand
-        }
-        setSnapLine(sn)
-        updateClip(clipId, (c) => {
-          c.in = ni
-          c.start = orig.start + (ni - orig.in)
-        }, key)
       } else {
-        const maxOut = m.kind === 'image' ? Infinity : m.duration
-        const lo = orig.in + MIN_CLIP
-        const hi = Math.min(maxOut, orig.out + (nextStart - clipEnd(orig)))
-        let no = clamp(orig.out + dt, lo, hi)
-        const sn = snap(orig.start + (no - orig.in))
-        if (sn !== null) {
-          const cand = orig.in + (sn - orig.start)
-          if (cand >= lo && cand <= hi) no = cand
+        // Trimming works in timeline time; the source range changes by the clip's speed at that edge.
+        const unlimited = m.kind === 'image'
+        const rev = !!speedOf(orig).reverse
+        const origEnd = clipEnd(orig)
+        if (mode === 'l') {
+          const rate = rateAt(orig, 0)
+          const avail = unlimited ? Infinity : rev ? m.duration - orig.out : orig.in
+          const lo = Math.max(prevEnd, orig.start - avail / rate)
+          const hi = origEnd - MIN_CLIP
+          let ns = clamp(orig.start + dt, lo, hi)
+          const sn = snap(ns)
+          if (sn !== null && sn >= lo && sn <= hi) ns = sn
+          setSnapLine(sn)
+          const dTau = orig.start - ns // > 0: the clip gets longer
+          const io = adjustPlayed(orig, 'head', dTau * rate)
+          updateClip(clipId, (c) => {
+            c.in = io.in
+            c.out = io.out
+            c.start = ns
+            // Keyframes stay on the same picture.
+            if (orig.keyframes) {
+              for (const k of Object.keys(orig.keyframes) as AnimProp[]) c.keyframes![k] = orig.keyframes[k]!.map((f) => ({ ...f, t: f.t + dTau }))
+            }
+          }, key)
+        } else {
+          const rate = rateAt(orig, clipDuration(orig))
+          const avail = unlimited ? Infinity : rev ? orig.in : m.duration - orig.out
+          const lo = orig.start + MIN_CLIP
+          const hi = Math.min(nextStart, origEnd + avail / rate)
+          let ne = clamp(origEnd + dt, lo, hi)
+          const sn = snap(ne)
+          if (sn !== null && sn >= lo && sn <= hi) ne = sn
+          setSnapLine(sn)
+          const io = adjustPlayed(orig, 'tail', (ne - origEnd) * rate)
+          updateClip(clipId, (c) => {
+            c.in = io.in
+            c.out = io.out
+          }, key)
         }
-        setSnapLine(sn)
-        updateClip(clipId, (c) => {
-          c.out = no
-        }, key)
       }
     }
 
@@ -380,6 +396,7 @@ export default function Timeline(): React.JSX.Element {
               isMain={t.id === main?.id}
               isText={project.clips.some((c) => c.trackId === t.id) && project.clips.filter((c) => c.trackId === t.id).every((c) => !!c.text)}
               isAdjust={project.clips.some((c) => c.trackId === t.id) && project.clips.filter((c) => c.trackId === t.id).every((c) => !!c.adjustment)}
+              isEffect={project.clips.some((c) => c.trackId === t.id) && project.clips.filter((c) => c.trackId === t.id).every((c) => !!c.effect)}
               height={TRACK_H[t.kind]}
               width={contentW}
               drop={dropTarget === t.id}
@@ -394,7 +411,7 @@ export default function Timeline(): React.JSX.Element {
               {project.clips
                 .filter((c) => c.trackId === t.id)
                 .map((c) => {
-                  const m = c.text || c.adjustment ? TEXT_MEDIA : mediaById.get(c.mediaId)
+                  const m = c.text || c.adjustment || c.effect ? TEXT_MEDIA : mediaById.get(c.mediaId)
                   if (!m) return null
                   return (
                     <ClipView
@@ -414,6 +431,24 @@ export default function Timeline(): React.JSX.Element {
                     />
                   )
                 })}
+              {t.kind === 'video' &&
+                project.clips
+                  .filter((c) => c.trackId === t.id && !c.adjustment && !c.effect && previousClip(project, c))
+                  .map((c) => (
+                    <button
+                      key={'cut' + c.id}
+                      className={`cut-marker ${c.transitionIn ? 'has' : ''} ${transitionSel === c.id ? 'selected' : ''}`}
+                      style={{ left: c.start * pps }}
+                      title={c.transitionIn ? 'Transition (click to edit)' : 'Add a transition'}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={() => {
+                        if (!c.transitionIn) setTransition(c.id, { type: 'dissolve', duration: DEFAULT_TRANSITION })
+                        selectTransition(c.id)
+                      }}
+                    >
+                      {c.transitionIn ? <Blend size={11} /> : <Plus size={11} />}
+                    </button>
+                  ))}
             </TrackRow>
           ))}
           {newZone('audio')}
@@ -506,6 +541,7 @@ function TrackRow(props: {
   isMain: boolean
   isText: boolean
   isAdjust: boolean
+  isEffect: boolean
   height: number
   width: number
   drop: boolean
@@ -520,8 +556,8 @@ function TrackRow(props: {
     <div className="tl-row" style={{ height: props.height }}>
       <div className="tl-head">
         <div className={`track-label ${props.isMain ? 'main' : ''}`}>
-          {props.isAdjust ? <SlidersHorizontal size={13} /> : props.isText ? <Type size={13} /> : t.kind === 'video' ? <Film size={13} /> : <Music size={13} />}
-          {props.isMain ? 'Main' : props.isAdjust ? 'Adjust' : props.isText ? 'Text' : t.kind === 'video' ? 'Overlay' : 'Audio'}
+          {props.isEffect ? <Sparkles size={13} /> : props.isAdjust ? <SlidersHorizontal size={13} /> : props.isText ? <Type size={13} /> : t.kind === 'video' ? <Film size={13} /> : <Music size={13} />}
+          {props.isMain ? 'Main' : props.isEffect ? 'Effects' : props.isAdjust ? 'Adjust' : props.isText ? 'Text' : t.kind === 'video' ? 'Overlay' : 'Audio'}
         </div>
         <button className={`icon-btn sm ${t.locked ? 'active' : ''}`} title={t.locked ? 'Unlock track' : 'Lock track'} onClick={() => toggleTrack(t.id, 'locked')}>
           {t.locked ? <Lock size={13} /> : <Unlock size={13} />}
@@ -569,12 +605,12 @@ const ClipView = memo(function ClipView(props: {
   const { clip: c, media: m, assets, pps, height, track } = props
   const left = c.start * pps
   const width = Math.max(2, clipDuration(c) * pps)
-  const isAdj = !!c.adjustment
+  const isAdj = !!c.adjustment || !!c.effect
   const isText = !!c.text || isAdj
-  const kindClass = isAdj ? 'text adjust' : c.text ? 'text' : m.kind === 'audio' ? 'audio' : m.kind === 'image' ? 'image video' : 'video'
+  const kindClass = c.effect ? 'text effect' : isAdj ? 'text adjust' : c.text ? 'text' : m.kind === 'audio' ? 'audio' : m.kind === 'image' ? 'image video' : 'video'
   const showWave = !isText && !!assets?.peaks && (m.kind === 'audio' || m.hasAudio)
   const filterName = c.color?.filter ? FILTERS.find((f) => f.id === c.color!.filter!.id)?.name : undefined
-  const label = isAdj ? `Adjustment${filterName ? ` · ${filterName}` : c.color?.lut ? ` · ${c.color.lut.name}` : ''}` : c.text ? c.text.content : m.name
+  const label = c.effect ? `Effect · ${EFFECT_NAMES[c.effect.type]}` : isAdj ? `Adjustment${filterName ? ` · ${filterName}` : c.color?.lut ? ` · ${c.color.lut.name}` : ''}` : c.text ? c.text.content : m.name
 
   return (
     <div
@@ -598,6 +634,13 @@ const ClipView = memo(function ClipView(props: {
       {!isText && (track.muted || c.volume === 0) && m.kind !== 'image' && (
         <div className="clip-muted">
           <VolumeX size={12} />
+        </div>
+      )}
+      {props.selected && c.keyframes && (
+        <div className="clip-kfs">
+          {[...new Set(Object.values(c.keyframes).flatMap((list) => (list ?? []).map((k) => Math.round(k.t * 100) / 100)))].map((t) => (
+            <span key={t} className="clip-kf" style={{ left: t * pps }} />
+          ))}
         </div>
       )}
       {!props.locked && (
@@ -630,7 +673,7 @@ function Thumbs(props: {
   for (let i = first; i < last; i++) {
     let idx = 0
     if (m.kind === 'video' && m.duration > 0) {
-      const t = c.in + (i * tw + tw / 2) / pps
+      const t = sourceTimeAt(c, (i * tw + tw / 2) / pps)
       idx = clamp(Math.floor((t / m.duration) * thumbs.length), 0, thumbs.length - 1)
     }
     imgs.push(

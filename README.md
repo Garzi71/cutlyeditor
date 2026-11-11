@@ -55,6 +55,16 @@ Potřebuješ mít nainstalované **Node.js** a **FFmpeg** (příkazy `ffmpeg` a 
 - **Adjustment layer**: vrstva na timeline, která obarví všechno pod sebou (jako v CapCutu)
 - Náhled i export počítají barvy stejně (3D LUT), takže výsledné video vypadá přesně jako v editoru
 
+## Pohyb, rychlost, přechody a efekty (fáze 4)
+
+- **Keyframy** u pozice, měřítka, rotace, průhlednosti a hlasitosti: kosočtverec ◆ vedle vlastnosti přidá klíčový snímek na místě přehrávací hlavy, šipky skáčou mezi nimi, u každého jde nastavit plynulost (Smooth, Linear, Ease in/out, Hold). Tažení klipu v přehrávači keyframy rovnou zapisuje.
+- **Speed**: stálá rychlost 0,1×–100×, **rychlostní rampy** (Montage, Hero, Bullet, Jump cut…) s upravitelnou křivkou, **pozpátku**. Hlas při zrychlení nemění výšku.
+- **Přechody**: 15 druhů (prolínačka, přes černou/bílou, posuny, stěrače, zoom, rozmazání, kruh, otočení). Najeď myší na střih mezi dvěma klipy na timeline a klikni na **+**, nebo vyber klip a přechod v záložce Transitions.
+- **Animation**: příchod a odchod klipu nebo textu (fade, zoom, slide, pop, spin, blur, u textu i psací stroj).
+- **Effects**: 10 video efektů jako vrstva na timeline (rozmazání, otřes, glitch, záblesk, VHS, zrno, RGB split, zrcadlo, pulzující zoom, pixelizace).
+- **Zvuk**: fade in/out a keyframy hlasitosti.
+- Export kreslí každý snímek stejným kódem jako přehrávač, takže video vypadá přesně jako v editoru. Trvá zhruba tak dlouho, jak je video dlouhé (1080p).
+
 ## Klávesové zkratky
 
 | Akce | Zkratka |

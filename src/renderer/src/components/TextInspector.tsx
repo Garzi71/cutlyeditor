@@ -4,7 +4,8 @@ import { AlignCenter, AlignLeft, AlignRight, CaseUpper, Italic, RotateCcw, Spark
 import type { Clip, TextStyle } from '@shared/types'
 import { applyTextStyleToTrack, defaultTransform, toast, updateClip, useEditor } from '../store'
 import { BUNDLED_FONTS, getSystemFonts, weightsFor } from '../lib/fonts'
-import { NumberField, SliderField } from './Controls'
+import { SliderField } from './Controls'
+import { AnimatedPosition, AnimatedSlider, AnimationPanel, KeyframeTools } from './MotionPanels'
 
 const WEIGHT_NAMES: Record<number, string> = {
   100: 'Thin', 200: 'Extra light', 300: 'Light', 400: 'Regular', 500: 'Medium', 600: 'Semibold', 700: 'Bold', 800: 'Extra bold', 900: 'Black'
@@ -200,42 +201,14 @@ export default function TextInspector({ clip }: { clip: Clip }): React.JSX.Eleme
               <RotateCcw size={14} />
             </button>
           </div>
-          <div className="field">
-            <label>Scale</label>
-            <SliderField
-              value={tr.scale}
-              min={0.05}
-              max={4}
-              suffix="%"
-              display={(v) => Math.round(v * 100)}
-              parse={(v) => v / 100}
-              onChange={(v) => setTr('scale', v)}
-            />
-          </div>
-          <div className="field">
-            <label>Position</label>
-            <div className="field-row">
-              <NumberField label="X" value={tr.x} onChange={(v) => setTr('x', v)} />
-              <NumberField label="Y" value={tr.y} onChange={(v) => setTr('y', v)} />
-            </div>
-          </div>
-          <div className="field">
-            <label>Rotate</label>
-            <SliderField value={tr.rotation} min={-180} max={180} suffix="°" onChange={(v) => setTr('rotation', v)} />
-          </div>
-          <div className="field">
-            <label>Opacity</label>
-            <SliderField
-              value={tr.opacity}
-              min={0}
-              max={1}
-              suffix="%"
-              display={(v) => Math.round(v * 100)}
-              parse={(v) => v / 100}
-              onChange={(v) => setTr('opacity', v)}
-            />
-          </div>
+          <AnimatedSlider clip={clip} prop="scale" label="Scale" min={0.05} max={4} suffix="%" display={(v) => Math.round(v * 100)} parse={(v) => v / 100} />
+          <AnimatedPosition clip={clip} />
+          <AnimatedSlider clip={clip} prop="rotation" label="Rotate" min={-180} max={180} suffix="°" />
+          <AnimatedSlider clip={clip} prop="opacity" label="Opacity" min={0} max={1} suffix="%" display={(v) => Math.round(v * 100)} parse={(v) => v / 100} />
+          <KeyframeTools clip={clip} props={['x', 'y', 'scale', 'rotation', 'opacity']} />
         </div>
+        <div className="section-group-title">Animation</div>
+        <AnimationPanel clip={clip} />
       </div>
     </>
   )

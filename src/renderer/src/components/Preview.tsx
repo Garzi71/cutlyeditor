@@ -3,7 +3,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Pause, Play, SkipBack, SkipForward } from 'lucide-react'
 import { clipEnd, fitSize, projectDuration } from '@shared/types'
 import { player } from '../engine/player'
-import { isClipLocked, updateClip, useEditor } from '../store'
+import { isClipLocked, setAnimated, setAnimatedValues, useEditor } from '../store'
+import { propAt } from '@shared/motion'
 import { aspectIdOf, formatTimecode } from '../lib/util'
 import { measureTextClip } from '../engine/text'
 
@@ -90,10 +91,12 @@ function SelectionOverlay({ scale }: { scale: number }): React.JSX.Element | nul
   if (!clip || playhead < clip.start || playhead >= clipEnd(clip)) return null
   const m = project.media.find((x) => x.id === clip.mediaId)
   const track = project.tracks.find((t) => t.id === clip.trackId)
-  if ((!m && !clip.text) || m?.kind === 'audio' || track?.hidden) return null
+  if ((!m && !clip.text) || m?.kind === 'audio' || track?.hidden || clip.adjustment || clip.effect) return null
   const locked = isClipLocked(project, clip)
 
-  const tr = clip.transform
+  // Where the clip is right now (keyframes included); dragging writes keyframes when animated.
+  const tau = Math.max(0, playhead - clip.start)
+  const tr = { x: propAt(clip, 'x', tau), y: propAt(clip, 'y', tau), scale: propAt(clip, 'scale', tau), rotation: propAt(clip, 'rotation', tau) }
   const fit = clip.text
     ? measureTextClip(clip.text, project.width)
     : fitSize(m!.width, m!.height, project.width, project.height)
@@ -116,10 +119,7 @@ function SelectionOverlay({ scale }: { scale: number }): React.JSX.Element | nul
       // Snap to the centre lines.
       if (Math.abs(nx) < 8 / scale) nx = 0
       if (Math.abs(ny) < 8 / scale) ny = 0
-      updateClip(clip.id, (c) => {
-        c.transform.x = Math.round(nx)
-        c.transform.y = Math.round(ny)
-      }, key)
+      setAnimatedValues(clip.id, { x: Math.round(nx), y: Math.round(ny) }, tau, key)
     }
     const up = (): void => {
       window.removeEventListener('pointermove', move)
@@ -141,9 +141,7 @@ function SelectionOverlay({ scale }: { scale: number }): React.JSX.Element | nul
     const move = (ev: PointerEvent): void => {
       const d = Math.hypot(ev.clientX - centerX, ev.clientY - centerY)
       const ns = Math.max(0.05, Math.min(10, (s0 * d) / d0))
-      updateClip(clip.id, (c) => {
-        c.transform.scale = Math.round(ns * 1000) / 1000
-      }, key)
+      setAnimated(clip.id, 'scale', tau, Math.round(ns * 1000) / 1000, key)
     }
     const up = (): void => {
       window.removeEventListener('pointermove', move)

@@ -1,7 +1,7 @@
 // Safe bridge between the UI (renderer) and the main process.
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type {
-  ExportProgress, ExportSettings, MediaItem, MediaKind, Project, RecentProject, SystemInfo, TranscribeOptions,
+  ExportProgress, ExportSettings, FrameRequest, MediaItem, MediaKind, Project, RecentProject, SystemInfo, TranscribeOptions,
   UpdateStatus, WhisperProgress, WhisperStatus, Word
 } from '../shared/types'
 
@@ -18,14 +18,14 @@ const api = {
     ipcRenderer.invoke('project:open', path),
   recentProjects: (): Promise<RecentProject[]> => ipcRenderer.invoke('project:recent'),
   chooseExportFile: (name: string): Promise<string | null> => ipcRenderer.invoke('export:chooseFile', name),
-  startExport: (project: Project, settings: ExportSettings): Promise<void> =>
-    ipcRenderer.invoke('export:start', project, settings),
+  exportBegin: (project: Project, settings: ExportSettings): Promise<void> => ipcRenderer.invoke('export:begin', project, settings),
+  exportFrame: (req: FrameRequest, time: number): Promise<Uint8Array | null> => ipcRenderer.invoke('export:frame', req, time),
+  exportRelease: (key: string): Promise<void> => ipcRenderer.invoke('export:release', key),
+  exportWrite: (frame: Uint8Array): Promise<void> => ipcRenderer.invoke('export:write', frame),
+  exportFinish: (): Promise<void> => ipcRenderer.invoke('export:finish'),
   cancelExport: (): Promise<void> => ipcRenderer.invoke('export:cancel'),
-  onExportProgress: (cb: (p: ExportProgress) => void): (() => void) => {
-    const listener = (_: unknown, p: ExportProgress): void => cb(p)
-    ipcRenderer.on('export:progress', listener)
-    return () => ipcRenderer.removeListener('export:progress', listener)
-  },
+  reverseProxy: (file: string, duration: number, hasAudio: boolean): Promise<string> =>
+    ipcRenderer.invoke('media:reverse', file, duration, hasAudio),
   showItemInFolder: (p: string): Promise<void> => ipcRenderer.invoke('shell:showItem', p),
   /** Called when the user tries to close the window; call confirmClose() to really close it. */
   onCloseRequest: (cb: () => void): (() => void) => {
@@ -40,8 +40,6 @@ const api = {
   readTextFile: (file: string): Promise<string> => ipcRenderer.invoke('file:readText', file),
   openLutDialog: (): Promise<string | null> => ipcRenderer.invoke('dialog:openLut'),
   // ---- export text frames ----
-  newExportTemp: (): Promise<string> => ipcRenderer.invoke('export:newTemp'),
-  writeExportTemp: (name: string, data: Uint8Array): Promise<string> => ipcRenderer.invoke('export:writeTemp', name, data),
   // ---- speech to text ----
   whisperStatus: (): Promise<WhisperStatus> => ipcRenderer.invoke('whisper:status'),
   whisperDownload: (gpu: boolean): Promise<void> => ipcRenderer.invoke('whisper:download', gpu),

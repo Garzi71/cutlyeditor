@@ -2,7 +2,7 @@
 // reading media info, generating thumbnails and audio waveforms.
 import { spawn } from 'child_process'
 import { createHash } from 'crypto'
-import { existsSync, promises as fs } from 'fs'
+import { existsSync, promises as fs, statSync } from 'fs'
 import path from 'path'
 import { app } from 'electron'
 import type { MediaItem, MediaKind, SystemInfo } from '../shared/types'
@@ -270,4 +270,58 @@ export function colorMatrixOf(file: string): Promise<string> {
     matrixCache.set(file, hit)
   }
   return hit
+}
+
+// ---------- reversed copies (reverse playback) ----------
+
+/** Where the reversed copy of a media file lives (in the cache folder). */
+export function reverseProxyPath(file: string): string {
+  const st = statSync(file)
+  const key = createHash('sha1').update(`${file}|${st.size}|${st.mtimeMs}`).digest('hex').slice(0, 16)
+  return path.join(app.getPath('userData'), 'cache', key, 'reverse.mp4')
+}
+
+const reversing = new Map<string, Promise<string>>()
+
+/**
+ * Make a reversed copy (video and audio). Reversing needs the whole stream in memory, so it is done
+ * in short chunks that are reversed one by one and joined in the opposite order.
+ */
+export function makeReverseProxy(file: string, duration: number, hasAudio: boolean): Promise<string> {
+  const out = reverseProxyPath(file)
+  let job = reversing.get(out)
+  if (job) return job
+  job = (async () => {
+    if (await exists(out)) return out
+    await fs.mkdir(path.dirname(out), { recursive: true })
+    const work = `${out}.parts`
+    await fs.mkdir(work, { recursive: true })
+    const CHUNK = 3
+    const n = Math.max(1, Math.ceil(duration / CHUNK))
+    const parts: string[] = []
+    for (let i = 0; i < n; i++) {
+      // i = 0 is the END of the source: it comes first in the reversed copy.
+      const end = duration - i * CHUNK
+      const start = Math.max(0, end - CHUNK)
+      const part = path.join(work, `p${String(i).padStart(4, '0')}.mp4`)
+      const res = await run(FFMPEG, [
+        '-v', 'error', '-y', '-ss', start.toFixed(3), '-t', (end - start).toFixed(3), '-i', file,
+        '-vf', 'reverse', ...(hasAudio ? ['-af', 'areverse', '-c:a', 'aac', '-b:a', '192k'] : ['-an']),
+        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '16', '-g', '15', '-pix_fmt', 'yuv420p', part
+      ])
+      if (res.code !== 0) throw new Error(res.stderr.trim().split('\n').pop() || 'reverse failed')
+      parts.push(part)
+    }
+    const list = path.join(work, 'list.txt')
+    await fs.writeFile(list, parts.map((p) => `file '${p.split(path.sep).join('/')}'`).join('\n'))
+    const tmpOut = `${out}.tmp.mp4`
+    const res = await run(FFMPEG, ['-v', 'error', '-y', '-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy', '-movflags', '+faststart', tmpOut])
+    if (res.code !== 0) throw new Error(res.stderr.trim().split('\n').pop() || 'reverse join failed')
+    await fs.rename(tmpOut, out)
+    await fs.rm(work, { recursive: true, force: true })
+    return out
+  })()
+  reversing.set(out, job)
+  job.catch(() => reversing.delete(out))
+  return job
 }
