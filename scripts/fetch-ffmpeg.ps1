@@ -1,7 +1,8 @@
 # Downloads a Windows FFmpeg build (with NVIDIA NVENC support) into resources/ffmpeg,
 # so it can be bundled inside the installer. Used by the GitHub Actions release build.
 $ErrorActionPreference = 'Stop'
-$url = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-shared.zip'
+# Pinned to a release branch: the master builds change command-line options without warning.
+$url = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n9.0-latest-win64-gpl-shared-9.0.zip'
 $root = Split-Path -Parent $PSScriptRoot
 $dest = Join-Path $root 'resources\ffmpeg'
 $tmp = Join-Path ([System.IO.Path]::GetTempPath()) "cutly-ffmpeg-$([guid]::NewGuid())"

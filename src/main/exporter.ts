@@ -248,7 +248,7 @@ export async function exportBegin(project: Project, s: ExportSettings): Promise<
   // 2) The encoder: frames from the UI on stdin + the mixed audio.
   const inputs: string[] = [
     '-f', 'rawvideo', '-pix_fmt', 'rgba', '-s', `${s.width}x${s.height}`, '-framerate', String(s.fps),
-    '-thread_queue_size', '64', '-i', 'pipe:0', '-i', audioFile
+    '-i', 'pipe:0', '-i', audioFile
   ]
 
   const q = { high: 0, medium: 1, low: 2 }[s.quality]
