@@ -65,6 +65,14 @@ Potřebuješ mít nainstalované **Node.js** a **FFmpeg** (příkazy `ffmpeg` a 
 - **Zvuk**: fade in/out a keyframy hlasitosti.
 - Export kreslí každý snímek stejným kódem jako přehrávač, takže video vypadá přesně jako v editoru. Trvá zhruba tak dlouho, jak je video dlouhé (1080p).
 
+## AI nástroje a sociální sítě (fáze 5)
+
+- **Remove background** (záložka Video): vystřihne lidi z videa bez zeleného plátna (Robust Video Matting, běží offline). Model (15 MB) se stáhne při prvním zapnutí. Pod klip dej obrázek nebo video, které bude novým pozadím. Běží na grafice, a když ji model na daném počítači nepočítá správně, Cutly to sám pozná a přepne na procesor (pomalejší, hlavně export).
+- **Remove silences** (záložka Audio): najde pauzy v řeči, ukáže je červeně na timeline a po potvrzení je vystřihne. Práh hlasitosti se nastaví sám podle nahrávky.
+- **Noise reduction** (záložka Audio): odstraní šum a hučení na pozadí (RNNoise), síla jde nastavit.
+- **Šablony**: 6 vestavěných na úvodní obrazovce (Vlog intro, TikTok hook, Slideshow…), vlastní projekt jde uložit jako šablonu (ikona v horní liště) a sdílet jako soubor `.cutlytemplate`.
+- **Export pro sítě**: předvolby TikTok, Reels, Shorts, YouTube, Instagram, X. Když má výstup jiný tvar než projekt, vybereš ořez, rozmazané pozadí nebo černé pruhy.
+
 ## Klávesové zkratky
 
 | Akce | Zkratka |
@@ -107,6 +115,7 @@ Lokální sestavení instalátoru (bez zveřejnění) jde přes `npm run dist`. 
 2. **Text a titulky:** textové vrstvy, fonty a styly, automatické titulky z řeči (Whisper, offline)
 3. **Barvy:** korekce barev, LUT, filtry, automatická korekce
 4. **Efekty:** přechody, rychlost, keyframe animace
+5. **AI nástroje:** odstranění pozadí, šumu a ticha, šablony, export pro sítě
 
 ## Struktura kódu (pro zvědavé)
 

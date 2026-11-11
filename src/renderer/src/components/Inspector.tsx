@@ -7,6 +7,7 @@ import { commit, defaultTransform, updateClip, useEditor } from '../store'
 import { ASPECTS, RESOLUTIONS, aspectIdOf, formatBytes, formatTimecode, frameSize } from '../lib/util'
 import { NumberField, SliderField } from './Controls'
 import TextInspector from './TextInspector'
+import BgPanel from './BgPanel'
 import { EffectInspector, TransitionInspector } from './FxPanels'
 import ColorInspector from './ColorInspector'
 import { NoisePanel, SilencePanel } from './AudioTools'
@@ -124,6 +125,7 @@ function ClipInspector({ project, clip, media }: { project: Project; clip: Clip;
             <KeyframeTools clip={clip} props={['x', 'y', 'scale', 'rotation', 'opacity']} />
           </div>
         )}
+        {tab === 'video' && visual && <BgPanel clip={clip} />}
         {tab === 'anim' && visual && <AnimationPanel clip={clip} />}
         {tab === 'speed' && canSpeed && <SpeedPanel clip={clip} />}
         {tab === 'audio' && hasSound && (

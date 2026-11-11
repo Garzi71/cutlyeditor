@@ -6,6 +6,7 @@ import { sourceTimeAt, speedOf } from '@shared/timing'
 import { maxScale } from '@shared/motion'
 import { neededMedia, renderFrame, visibleSpan } from './compositor'
 import { ensureFont } from '../lib/fonts'
+import { dropMatter, matterFor } from './matting'
 
 export interface ExportProgressInfo {
   percent: number
@@ -21,6 +22,7 @@ interface ClipFrames {
   ctx: CanvasRenderingContext2D
   image: ImageData
   end: number // timeline time after which the clip is no longer needed
+  matted?: HTMLCanvasElement // the frame with its background removed
 }
 
 export async function runExport(
@@ -115,6 +117,12 @@ export async function runExport(
           if (data && data.length === cf.image.data.length) {
             cf.image.data.set(data)
             cf.ctx.putImageData(cf.image, 0, 0)
+            // Background removal: wait for this exact frame's mask (the preview may lag, the export doesn't).
+            if (c.removeBg && (m.kind === 'video' || !cf.matted)) {
+              const matter = matterFor('e:' + c.id)
+              await matter.process(cf.canvas, cf.canvas.width, cf.canvas.height, m.kind === 'image' ? 0 : fileTime(c, m, t))
+              cf.matted = matter.compose(cf.canvas, cf.canvas.width, cf.canvas.height)
+            }
           }
         })
       )
@@ -122,10 +130,14 @@ export async function runExport(
       for (const [id, cf] of clipFrames) {
         if (t > cf.end + 0.5) {
           window.api.exportRelease(id)
+          dropMatter('e:' + id)
           clipFrames.delete(id)
         }
       }
-      renderFrame(sctx, project, t, RW, RH, (c) => clipFrames.get(c.id)?.canvas ?? null)
+      renderFrame(sctx, project, t, RW, RH, (c) => {
+        const cf = clipFrames.get(c.id)
+        return (c.removeBg ? cf?.matted : cf?.canvas) ?? null
+      })
       if (!sameShape) placeScene(ctx, scene, W, H, fit)
       const px = ctx.getImageData(0, 0, W, H).data
       await window.api.exportWrite(new Uint8Array(px.buffer, px.byteOffset, px.byteLength))

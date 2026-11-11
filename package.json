@@ -36,7 +36,10 @@
       {
         "from": "resources/models",
         "to": "models",
-        "filter": ["*.rnnn", "*.txt"]
+        "filter": [
+          "*.rnnn",
+          "*.txt"
+        ]
       },
       {
         "from": "resources/ffmpeg",
@@ -98,6 +101,7 @@
     "zustand": "^5.1.0"
   },
   "dependencies": {
-    "electron-updater": "^6.8.11"
+    "electron-updater": "^6.8.11",
+    "onnxruntime-web": "1.23"
   }
 }

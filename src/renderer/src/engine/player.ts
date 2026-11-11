@@ -7,6 +7,7 @@ import { volumeAt } from '@shared/motion'
 import { toast, useEditor } from '../store'
 import { mediaUrl } from '../lib/util'
 import { renderFrame, visibleSpan } from './compositor'
+import { matterFor } from './matting'
 
 interface ClipSource {
   el: HTMLVideoElement | HTMLAudioElement
@@ -173,12 +174,28 @@ class Player {
   }
 
   private frameOf(c: Clip, m: MediaItem): CanvasImageSource | null {
+    let src: CanvasImageSource | null = null
+    let w = m.width
+    let h = m.height
+    let time = 0
     if (m.kind === 'image') {
       const img = this.image(m)
-      return img.complete && img.naturalWidth ? img : null
+      src = img.complete && img.naturalWidth ? img : null
+    } else {
+      const s = this.sources.get(c.id)
+      const v = s?.el as HTMLVideoElement | undefined
+      if (v && v.readyState >= 2) {
+        src = v
+        w = v.videoWidth || w
+        h = v.videoHeight || h
+        time = v.currentTime
+      }
     }
-    const s = this.sources.get(c.id)
-    return s && (s.el as HTMLVideoElement).readyState >= 2 ? (s.el as HTMLVideoElement) : null
+    if (!src || !c.removeBg) return src
+    // Background removal: the model runs in the background, the latest mask is applied right away.
+    const matter = matterFor('p:' + c.id)
+    matter.kick(src, w, h, time)
+    return matter.hasMask ? matter.compose(src, w, h) : src
   }
 
   private source(c: Clip, m: MediaItem, key: string): ClipSource {

@@ -419,3 +419,32 @@ export async function suggestSilenceThreshold(file: string, from: number, to: nu
   const threshold = Math.round(Math.min(speech - 6, Math.max(noise + 3, noise + 0.35 * (speech - noise))))
   return { noise, speech, threshold }
 }
+
+// ---------- background removal model (downloaded on first use) ----------
+
+const RVM_URL = 'https://github.com/PeterL1n/RobustVideoMatting/releases/download/v1.0.0/rvm_mobilenetv3_fp32.onnx'
+export const RVM_SIZE = 14975696
+
+export const mattingModelPath = (): string => path.join(app.getPath('userData'), 'models', 'rvm_mobilenetv3_fp32.onnx')
+
+export async function downloadMattingModel(onProgress: (fraction: number) => void): Promise<string> {
+  const dest = mattingModelPath()
+  if (await exists(dest)) return dest
+  await fs.mkdir(path.dirname(dest), { recursive: true })
+  const res = await fetch(RVM_URL, { redirect: 'follow' })
+  if (!res.ok || !res.body) throw new Error(`Download failed (${res.status})`)
+  const part = `${dest}.part`
+  const chunks: Uint8Array[] = []
+  let got = 0
+  const reader = res.body.getReader()
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    chunks.push(value)
+    got += value.byteLength
+    onProgress(Math.min(1, got / RVM_SIZE))
+  }
+  await fs.writeFile(part, Buffer.concat(chunks))
+  await fs.rename(part, dest)
+  return dest
+}

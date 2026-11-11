@@ -39,6 +39,13 @@ const api = {
     ipcRenderer.invoke('media:silenceLevel', file, from, to),
   detectSilence: (file: string, from: number, to: number, threshold: number, minDuration: number): Promise<[number, number][]> =>
     ipcRenderer.invoke('media:silence', file, from, to, threshold, minDuration),
+  mattingStatus: (): Promise<{ ready: boolean; size: number; path: string }> => ipcRenderer.invoke('matting:status'),
+  downloadMattingModel: (): Promise<string> => ipcRenderer.invoke('matting:download'),
+  onMattingProgress: (cb: (fraction: number) => void): (() => void) => {
+    const listener = (_: unknown, f: number): void => cb(f)
+    ipcRenderer.on('matting:progress', listener)
+    return () => ipcRenderer.removeListener('matting:progress', listener)
+  },
   listTemplates: (): Promise<TemplateInfo[]> => ipcRenderer.invoke('templates:list'),
   saveTemplate: (t: Template): Promise<string> => ipcRenderer.invoke('templates:save', t),
   exportTemplate: (t: Template): Promise<string | null> => ipcRenderer.invoke('templates:export', t),

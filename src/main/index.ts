@@ -7,7 +7,7 @@ import { Readable } from 'stream'
 import type { ExportSettings, FrameRequest, Project, RecentProject, Template, TemplateInfo, TranscribeOptions } from '../shared/types'
 import { cancelExport, exportBegin, exportFinish, exportFrame, exportRelease, exportWrite } from './exporter'
 import { whisperCancel, whisperDownload, whisperStatus, whisperTranscribe } from './whisper'
-import { detectSilence, makeDenoisedAudio, suggestSilenceThreshold, makePeaks, makeReverseProxy, makeThumbnails, probe, sampleFrames, systemInfo } from './ffmpeg'
+import { RVM_SIZE, detectSilence, downloadMattingModel, makeDenoisedAudio, mattingModelPath, suggestSilenceThreshold, makePeaks, makeReverseProxy, makeThumbnails, probe, sampleFrames, systemInfo } from './ffmpeg'
 import { initUpdater, installingUpdate } from './updater'
 
 // Developer aid: `CUTLY_DEBUG_PORT=9222 npm run dev` allows inspecting the UI from outside.
@@ -208,6 +208,10 @@ function registerIpc(): void {
   ipcMain.handle('media:silence', (_e, file: string, from: number, to: number, threshold: number, minDuration: number) =>
     detectSilence(file, from, to, threshold, minDuration)
   )
+
+  // ---- background removal model ----
+  ipcMain.handle('matting:status', async () => ({ ready: await fs.access(mattingModelPath()).then(() => true, () => false), size: RVM_SIZE, path: mattingModelPath() }))
+  ipcMain.handle('matting:download', (e) => downloadMattingModel((f) => !e.sender.isDestroyed() && e.sender.send('matting:progress', f)))
 
   // ---- templates (stored as .cutlytemplate JSON files in the app's data folder) ----
   const templatesDir = path.join(app.getPath('userData'), 'templates')

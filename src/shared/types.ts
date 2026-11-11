@@ -161,6 +161,8 @@ export interface Clip {
   transitionIn?: { type: TransitionType; duration: number }
   animIn?: { type: ClipAnimType; duration: number }
   animOut?: { type: ClipAnimType; duration: number }
+  /** Remove the background behind people (AI matting). */
+  removeBg?: boolean
   /** Noise reduction strength 0..1 (RNNoise). */
   denoise?: number
   /** Audio fades in seconds. */
