@@ -43,6 +43,18 @@ Potřebuješ mít nainstalované **Node.js** a **FFmpeg** (příkazy `ffmpeg` a 
   - *Apply this style to all captions* nastaví stejný vzhled všem titulkům najednou
 - Text i titulky se exportují přesně tak, jak vypadají v náhledu
 
+## Barvy a filtry (fáze 3)
+
+- Záložka **Color** u každého videa a fotky (vpravo):
+  - **Auto color**: jedním kliknutím srovná vyvážení bílé, expozici a černou/bílou; výsledek jde doladit posuvníky
+  - **Match**: přizpůsobí barvy klipu jinému klipu (např. dva různé mobily)
+  - Light (expozice, kontrast, světla, stíny, bílá, černá), Color (teplota, odstín, saturace, živost)
+  - **HSL**: úprava jednotlivých barev (např. jen modré nebe), **křivky** (All/R/G/B), ostrost, vinetace
+  - *Apply this look to all clips* zkopíruje vzhled na všechny klipy
+- Záložka **Filters** (vlevo): 20 filtrů s náhledem na tvém klipu, intenzita filtru, **import vlastních .cube LUT**
+- **Adjustment layer**: vrstva na timeline, která obarví všechno pod sebou (jako v CapCutu)
+- Náhled i export počítají barvy stejně (3D LUT), takže výsledné video vypadá přesně jako v editoru
+
 ## Klávesové zkratky
 
 | Akce | Zkratka |

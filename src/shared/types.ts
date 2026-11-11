@@ -76,12 +76,48 @@ export interface TextData {
   caption?: boolean // created by auto captions
 }
 
+// ---------- color ----------
+
+export const HSL_BANDS = ['red', 'orange', 'yellow', 'green', 'aqua', 'blue', 'purple', 'magenta'] as const
+export type HslBand = (typeof HSL_BANDS)[number]
+
+/** Curve points [x, y] in 0..1, sorted by x, always including x = 0 and x = 1. */
+export type CurvePoints = [number, number][]
+
+export interface ColorAdjust {
+  exposure: number // stops, -2..2
+  contrast: number // -100..100 (the rest too)
+  highlights: number
+  shadows: number
+  whites: number
+  blacks: number
+  temperature: number
+  tint: number
+  saturation: number
+  vibrance: number
+  sharpen: number // 0..100
+  vignette: number // 0..100
+}
+
+export interface ColorGrade {
+  adjust: ColorAdjust
+  curves?: { master: CurvePoints; r: CurvePoints; g: CurvePoints; b: CurvePoints }
+  hsl?: Partial<Record<HslBand, { h: number; s: number; l: number }>> // -100..100
+  filter?: { id: string; intensity: number } // 0..1
+  lut?: { path: string; name: string; intensity: number }
+  /** Per-channel gain/offset from "match colors" (applied first). */
+  match?: { gain: [number, number, number]; offset: [number, number, number]; ref: string }
+}
+
 export interface Clip {
   id: string
   trackId: string
-  /** Empty for text clips. */
+  /** Empty for text clips and adjustment layers. */
   mediaId: string
   text?: TextData
+  /** Adjustment layer: colors everything below it on the timeline while it is active. */
+  adjustment?: boolean
+  color?: ColorGrade
   start: number // position on the timeline
   in: number // start inside the source media
   out: number // end inside the source media
@@ -101,9 +137,22 @@ export interface Project {
   clips: Clip[]
 }
 
-export type ClipKind = MediaKind | 'text'
+export type ClipKind = MediaKind | 'text' | 'adjustment'
+
+/** Clips that are not backed by a media file. */
+export const isGenerated = (c: Clip): boolean => !!c.text || !!c.adjustment
+
+const evenPx = (n: number): number => Math.max(2, Math.round(n / 2) * 2)
+
+/** Pixel size a media clip is scaled to in an export of width W (before rotation). Shared by UI and exporter. */
+export function clipOutputSize(p: Project, m: MediaItem, c: Clip, W: number): { w: number; h: number } {
+  const k = W / p.width
+  const fit = fitSize(m.width, m.height, p.width, p.height)
+  return { w: evenPx(fit.w * c.transform.scale * k), h: evenPx(fit.h * c.transform.scale * k) }
+}
 
 export function clipKind(p: Project, c: Clip): ClipKind | null {
+  if (c.adjustment) return 'adjustment'
   if (c.text) return 'text'
   return p.media.find((m) => m.id === c.mediaId)?.kind ?? null
 }
@@ -132,6 +181,14 @@ export interface ExportSettings {
   useGpu: boolean
   /** Pre-rendered text, one transparent PNG sequence per video track (rendered by the UI). */
   textLayers?: TextLayer[]
+  /** Per clip color files prepared by the UI (file names inside the export temp folder). */
+  colorAssets?: Record<string, ColorAsset>
+}
+
+export interface ColorAsset {
+  lut?: string // .cube file name
+  vignette?: string // PNG mask file name, sized like the clip's output
+  sharpen?: number // 0..100
 }
 
 export interface TextLayer {

@@ -34,6 +34,11 @@ const api = {
     return () => ipcRenderer.removeListener('app:close-request', listener)
   },
   confirmClose: (): Promise<void> => ipcRenderer.invoke('app:confirm-close'),
+  // ---- color ----
+  mediaSamples: (file: string, times: number[], w: number, h: number): Promise<Uint8Array> =>
+    ipcRenderer.invoke('media:samples', file, times, w, h),
+  readTextFile: (file: string): Promise<string> => ipcRenderer.invoke('file:readText', file),
+  openLutDialog: (): Promise<string | null> => ipcRenderer.invoke('dialog:openLut'),
   // ---- export text frames ----
   newExportTemp: (): Promise<string> => ipcRenderer.invoke('export:newTemp'),
   writeExportTemp: (name: string, data: Uint8Array): Promise<string> => ipcRenderer.invoke('export:writeTemp', name, data),

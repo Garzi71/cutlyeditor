@@ -1,7 +1,7 @@
 // Bottom panel: multi-track timeline with ruler, playhead, clip move/trim, snapping and zoom.
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Copy, Eye, EyeOff, Film, Lock, Magnet, Maximize2, Music, Redo2, Scissors, Trash2, Type, Undo2, Unlock, Volume2,
+  Copy, Eye, EyeOff, Film, Lock, Magnet, Maximize2, Music, Palette, Redo2, Scissors, SlidersHorizontal, Trash2, Type, Undo2, Unlock, Volume2,
   VolumeX, ZoomIn, ZoomOut
 } from 'lucide-react'
 import type { Clip, MediaAssets, MediaItem, Track, TrackKind } from '@shared/types'
@@ -12,6 +12,8 @@ import {
   mainTrack, orderedTracks, overlaps, pruneTracks, redo, select, splitAt, toggleTrack, undo, updateClip, useEditor
 } from '../store'
 import { clamp, formatShort, mediaUrl } from '../lib/util'
+import { gradeIsActive } from '../engine/color'
+import { FILTERS } from '../engine/filters'
 
 const HEADER_W = 132
 const RULER_H = 28
@@ -138,7 +140,7 @@ export default function Timeline(): React.JSX.Element {
     if (!orig) return
     select(clipId, e.shiftKey || e.ctrlKey)
     if (isClipLocked(p, orig)) return
-    const m = orig.text ? TEXT_MEDIA : p.media.find((x) => x.id === orig.mediaId)
+    const m = orig.text || orig.adjustment ? TEXT_MEDIA : p.media.find((x) => x.id === orig.mediaId)
     if (!m) return
     const kind: TrackKind = m.kind === 'audio' ? 'audio' : 'video'
     const pps0 = st.pxPerSec
@@ -377,6 +379,7 @@ export default function Timeline(): React.JSX.Element {
               track={t}
               isMain={t.id === main?.id}
               isText={project.clips.some((c) => c.trackId === t.id) && project.clips.filter((c) => c.trackId === t.id).every((c) => !!c.text)}
+              isAdjust={project.clips.some((c) => c.trackId === t.id) && project.clips.filter((c) => c.trackId === t.id).every((c) => !!c.adjustment)}
               height={TRACK_H[t.kind]}
               width={contentW}
               drop={dropTarget === t.id}
@@ -391,7 +394,7 @@ export default function Timeline(): React.JSX.Element {
               {project.clips
                 .filter((c) => c.trackId === t.id)
                 .map((c) => {
-                  const m = c.text ? TEXT_MEDIA : mediaById.get(c.mediaId)
+                  const m = c.text || c.adjustment ? TEXT_MEDIA : mediaById.get(c.mediaId)
                   if (!m) return null
                   return (
                     <ClipView
@@ -502,6 +505,7 @@ function TrackRow(props: {
   track: Track
   isMain: boolean
   isText: boolean
+  isAdjust: boolean
   height: number
   width: number
   drop: boolean
@@ -516,8 +520,8 @@ function TrackRow(props: {
     <div className="tl-row" style={{ height: props.height }}>
       <div className="tl-head">
         <div className={`track-label ${props.isMain ? 'main' : ''}`}>
-          {props.isText ? <Type size={13} /> : t.kind === 'video' ? <Film size={13} /> : <Music size={13} />}
-          {props.isMain ? 'Main' : props.isText ? 'Text' : t.kind === 'video' ? 'Overlay' : 'Audio'}
+          {props.isAdjust ? <SlidersHorizontal size={13} /> : props.isText ? <Type size={13} /> : t.kind === 'video' ? <Film size={13} /> : <Music size={13} />}
+          {props.isMain ? 'Main' : props.isAdjust ? 'Adjust' : props.isText ? 'Text' : t.kind === 'video' ? 'Overlay' : 'Audio'}
         </div>
         <button className={`icon-btn sm ${t.locked ? 'active' : ''}`} title={t.locked ? 'Unlock track' : 'Lock track'} onClick={() => toggleTrack(t.id, 'locked')}>
           {t.locked ? <Lock size={13} /> : <Unlock size={13} />}
@@ -565,9 +569,12 @@ const ClipView = memo(function ClipView(props: {
   const { clip: c, media: m, assets, pps, height, track } = props
   const left = c.start * pps
   const width = Math.max(2, clipDuration(c) * pps)
-  const isText = !!c.text
-  const kindClass = isText ? 'text' : m.kind === 'audio' ? 'audio' : m.kind === 'image' ? 'image video' : 'video'
+  const isAdj = !!c.adjustment
+  const isText = !!c.text || isAdj
+  const kindClass = isAdj ? 'text adjust' : c.text ? 'text' : m.kind === 'audio' ? 'audio' : m.kind === 'image' ? 'image video' : 'video'
   const showWave = !isText && !!assets?.peaks && (m.kind === 'audio' || m.hasAudio)
+  const filterName = c.color?.filter ? FILTERS.find((f) => f.id === c.color!.filter!.id)?.name : undefined
+  const label = isAdj ? `Adjustment${filterName ? ` · ${filterName}` : c.color?.lut ? ` · ${c.color.lut.name}` : ''}` : c.text ? c.text.content : m.name
 
   return (
     <div
@@ -582,8 +589,10 @@ const ClipView = memo(function ClipView(props: {
         <Waveform peaks={assets!.peaks!} from={c.in} to={c.out} widthPx={width} />
       )}
       <div className="clip-label">
-        {isText && <Type size={11} style={{ flexShrink: 0, marginTop: 2 }} />}
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{isText ? c.text!.content : m.name}</span>
+        {c.text && <Type size={11} style={{ flexShrink: 0, marginTop: 2 }} />}
+        {isAdj && <SlidersHorizontal size={11} style={{ flexShrink: 0, marginTop: 2 }} />}
+        {!isText && gradeIsActive(c.color) && <Palette size={11} style={{ flexShrink: 0, marginTop: 2 }} />}
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</span>
         {!isText && <span className="dur">{formatShort(clipDuration(c))}</span>}
       </div>
       {!isText && (track.muted || c.volume === 0) && m.kind !== 'image' && (

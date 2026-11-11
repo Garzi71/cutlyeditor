@@ -5,9 +5,11 @@ import os from 'os'
 import path from 'path'
 import type { Clip, ExportProgress, ExportSettings, MediaItem, Project, TextLayer } from '../shared/types'
 import { clipDuration, clipEnd, fitSize, projectDuration } from '../shared/types'
-import { FFMPEG, run } from './ffmpeg'
+import { FFMPEG, colorMatrixOf, run } from './ffmpeg'
 
 const even = (n: number): number => Math.max(2, Math.round(n / 2) * 2)
+/** Maps the 0..100 sharpen slider to ffmpeg unsharp's luma amount (roughly matching the preview). */
+const sharpAmount = (v: number): string => ((v / 100) * 1.2).toFixed(3)
 const f3 = (n: number): string => n.toFixed(3)
 
 /** Collects ffmpeg inputs; one input per clip (trimmed with -ss / -t). */
@@ -70,7 +72,12 @@ interface Built {
   total: number
 }
 
-export function buildExport(project: Project, s: ExportSettings, textLists: Map<string, string>): Built {
+export function buildExport(
+  project: Project,
+  s: ExportSettings,
+  textLists: Map<string, string>,
+  matrices: Map<string, string> = new Map()
+): Built {
   const total = projectDuration(project)
   if (total <= 0) throw new Error('The timeline is empty.')
 
@@ -82,13 +89,35 @@ export function buildExport(project: Project, s: ExportSettings, textLists: Map<
   const filters: string[] = []
 
   // ---- video: draw bottom track first, top track last ----
-  filters.push(`color=c=${project.background}:s=${W}x${H}:r=${s.fps}:d=${f3(total)}[base]`)
+  // Everything is composed in RGB; converting to YUV happens once at the end (BT.709).
+  filters.push(`color=c=${project.background}:s=${W}x${H}:r=${s.fps}:d=${f3(total)},format=rgba[base]`)
   let current = 'base'
   let n = 0
   const videoTracks = project.tracks.filter((t) => t.kind === 'video' && !t.hidden).reverse()
   for (const track of videoTracks) {
     const clips = project.clips.filter((c) => c.trackId === track.id).sort((a, b) => a.start - b.start)
     for (const clip of clips) {
+      const asset = s.colorAssets?.[clip.id]
+      if (clip.adjustment) {
+        // Adjustment layer: grade everything composed so far, only while the layer is active.
+        if (!asset) continue
+        const en = `enable='between(t,${f3(clip.start)},${f3(clipEnd(clip))})'`
+        const parts: string[] = []
+        if (asset.sharpen) parts.push(`unsharp=luma_msize_x=5:luma_msize_y=5:luma_amount=${sharpAmount(asset.sharpen)}:${en}`)
+        if (asset.lut) parts.push(`lut3d=file=${asset.lut}:interp=tetrahedral:${en}`)
+        if (parts.length) {
+          filters.push(`[${current}]${parts.join(',')}[o${n}]`)
+          current = `o${n}`
+          n++
+        }
+        if (asset.vignette) {
+          const vi = inputs.raw('-loop', '1', '-framerate', String(s.fps), '-t', f3(total), '-i', asset.vignette)
+          filters.push(`[${current}][${vi}:v]overlay=0:0:format=rgb:eof_action=pass:${en}[o${n}]`)
+          current = `o${n}`
+          n++
+        }
+        continue
+      }
       const m = media.get(clip.mediaId)
       if (!m || clip.text || m.kind === 'audio') continue
       const idx = inputs.forClip(clip, m)
@@ -102,13 +131,25 @@ export function buildExport(project: Project, s: ExportSettings, textLists: Map<
       const ox = Math.round(W / 2 + tr.x * k - rw / 2)
       const oy = Math.round(H / 2 + tr.y * k - rh / 2)
 
-      let chain = `[${idx}:v]setpts=PTS-STARTPTS+${f3(clip.start)}/TB,scale=${w}:${h},setsar=1,format=rgba`
+      // Color: sharpen -> LUT -> vignette, the same order as the preview shader.
+      // Decode with the same color matrix the preview uses, straight to RGB.
+      const matrix = m.kind === 'video' ? `:in_color_matrix=${matrices.get(m.path) ?? 'bt709'}` : ''
+      let chain = `[${idx}:v]setpts=PTS-STARTPTS+${f3(clip.start)}/TB`
+      if (asset?.sharpen) chain += `,unsharp=luma_msize_x=5:luma_msize_y=5:luma_amount=${sharpAmount(asset.sharpen)}`
+      chain += `,scale=${w}:${h}${matrix},setsar=1,format=rgba`
+      if (asset?.lut) chain += `,lut3d=file=${asset.lut}:interp=tetrahedral`
+      if (asset?.vignette) {
+        const vi = inputs.raw('-loop', '1', '-framerate', String(s.fps), '-t', f3(clipDuration(clip)), '-i', asset.vignette)
+        filters.push(`${chain}[c${n}]`)
+        filters.push(`[${vi}:v]setpts=PTS-STARTPTS+${f3(clip.start)}/TB,format=rgba[g${n}]`)
+        chain = `[c${n}][g${n}]overlay=0:0:format=rgb:eof_action=pass,format=rgba`
+      }
       if (tr.rotation % 360 !== 0) chain += `,rotate=${rad.toFixed(5)}:ow=${rw}:oh=${rh}:c=none`
       if (tr.opacity < 1) chain += `,colorchannelmixer=aa=${tr.opacity.toFixed(3)}`
       chain += `[v${n}]`
       filters.push(chain)
       filters.push(
-        `[${current}][v${n}]overlay=x=${ox}:y=${oy}:eof_action=pass:enable='between(t,${f3(clip.start)},${f3(clipEnd(clip))})'[o${n}]`
+        `[${current}][v${n}]overlay=x=${ox}:y=${oy}:format=rgb:eof_action=pass:enable='between(t,${f3(clip.start)},${f3(clipEnd(clip))})'[o${n}]`
       )
       current = `o${n}`
       n++
@@ -118,12 +159,12 @@ export function buildExport(project: Project, s: ExportSettings, textLists: Map<
     if (list) {
       const idx = inputs.raw('-f', 'concat', '-safe', '0', '-i', list)
       filters.push(`[${idx}:v]scale=${W}:${H},format=rgba,setpts=PTS-STARTPTS[t${n}]`)
-      filters.push(`[${current}][t${n}]overlay=0:0:eof_action=pass[o${n}]`)
+      filters.push(`[${current}][t${n}]overlay=0:0:format=rgb:eof_action=pass[o${n}]`)
       current = `o${n}`
       n++
     }
   }
-  filters.push(`[${current}]format=yuv420p[vout]`)
+  filters.push(`[${current}]scale=out_color_matrix=bt709:out_range=tv,format=yuv420p[vout]`)
 
   audioMix(project, total, inputs, filters)
 
@@ -147,6 +188,7 @@ export function buildExport(project: Project, s: ExportSettings, textLists: Map<
     '-map', '[vout]', '-map', '[aout]',
     ...enc,
     '-pix_fmt', 'yuv420p', '-r', String(s.fps),
+    '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-color_range', 'tv',
     '-c:a', 'aac', '-b:a', '192k',
     '-t', f3(total), '-movflags', '+faststart',
     s.outputPath
@@ -200,13 +242,16 @@ export async function startExport(
   const dir = tempDir ?? (await newTempDir())
   const textLists = new Map<string, string>()
   for (const layer of settings.textLayers ?? []) textLists.set(layer.trackId, await writeConcatList(layer, dir))
-  const built = buildExport(project, settings, textLists)
+  const matrices = new Map<string, string>()
+  for (const m of project.media) if (m.kind === 'video') matrices.set(m.path, await colorMatrixOf(m.path))
+  const built = buildExport(project, settings, textLists, matrices)
   // The filter graph goes into a file: long timelines would exceed the Windows command-line limit.
   const filterFile = path.join(dir, 'filter.txt')
   await fs.writeFile(filterFile, built.filter)
   const args = built.args.map((a) => (a === '__FILTER__' ? filterFile : a))
 
-  const proc = spawn(FFMPEG, args, { windowsHide: true })
+  // Run inside the temp folder: color files are referenced by plain names (no Windows path escaping).
+  const proc = spawn(FFMPEG, args, { windowsHide: true, cwd: dir })
   const state = { proc, output: settings.outputPath, cancelled: false }
   running = state
   const started = Date.now()

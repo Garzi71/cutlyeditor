@@ -232,3 +232,42 @@ export function systemInfo(): Promise<SystemInfo> {
   }
   return sysInfo
 }
+
+/**
+ * Small RGB frames for color analysis: `w`x`h` RGB24 per time, concatenated.
+ * Decoded by ffmpeg, i.e. the same way the export sees the video.
+ */
+export async function sampleFrames(file: string, times: number[], w: number, h: number): Promise<Buffer> {
+  const frames: Buffer[] = []
+  for (const t of times) {
+    const res = await run(FFMPEG, [
+      '-v', 'error', '-ss', Math.max(0, t).toFixed(3), '-i', file, '-frames:v', '1',
+      '-vf', `scale=${w}:${h}:flags=area`, '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'
+    ])
+    if (res.code === 0 && res.stdout.length === w * h * 3) frames.push(res.stdout)
+  }
+  return Buffer.concat(frames)
+}
+
+const matrixCache = new Map<string, Promise<string>>()
+
+/**
+ * The YUV->RGB matrix to decode a video with. Untagged video is treated as BT.709, like
+ * Chromium does in the preview (ffmpeg would otherwise assume BT.601 and shift colors).
+ */
+export function colorMatrixOf(file: string): Promise<string> {
+  let hit = matrixCache.get(file)
+  if (!hit) {
+    hit = run(FFPROBE, ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=color_space', '-of', 'csv=p=0', file])
+      .then((r) => {
+        const cs = r.stdout.toString().trim()
+        if (cs === 'bt470bg' || cs === 'smpte170m') return 'bt601'
+        if (cs.startsWith('bt2020')) return 'bt2020'
+        if (cs === 'smpte240m') return 'smpte240m'
+        return 'bt709'
+      })
+      .catch(() => 'bt709')
+    matrixCache.set(file, hit)
+  }
+  return hit
+}

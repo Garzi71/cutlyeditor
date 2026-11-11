@@ -8,6 +8,7 @@ import { useEditor } from '../store'
 import { RESOLUTIONS, formatShort } from '../lib/util'
 import { Segmented } from './Controls'
 import { renderTextLayers } from '../engine/exportText'
+import { prepareColorAssets } from '../engine/exportColor'
 
 type Phase = 'setup' | 'running' | 'done' | 'error'
 
@@ -60,9 +61,13 @@ export default function ExportDialog(): React.JSX.Element {
     try {
       const hasText = project.clips.some((c) => c.text)
       if (hasText) setPreparing(0)
+      // renderTextLayers creates a fresh export temp folder, so it runs first.
       const textLayers = await renderTextLayers(project, width, height, (f) => setPreparing(f))
+      const colorAssets = await prepareColorAssets(project, width)
       setPreparing(null)
-      await window.api.startExport(project, { outputPath: out, width, height, fps, codec, quality, useGpu, textLayers })
+      await window.api.startExport(project, {
+        outputPath: out, width, height, fps, codec, quality, useGpu, textLayers, colorAssets
+      })
     } catch (e) {
       setPreparing(null)
       setPhase('error')

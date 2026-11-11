@@ -2,7 +2,7 @@
 // Every change to the project goes through `commit`, which records undo history.
 import { create } from 'zustand'
 import { produce, type Draft } from 'immer'
-import type { Clip, MediaAssets, MediaItem, Project, TextData, TextStyle, Track, TrackKind } from '@shared/types'
+import type { Clip, ColorGrade, MediaAssets, MediaItem, Project, TextData, TextStyle, Track, TrackKind } from '@shared/types'
 import { clipEnd } from '@shared/types'
 import { uid } from './lib/util'
 
@@ -442,6 +442,72 @@ export function applyTextStyleToTrack(clipId: string): number {
     }
   })
   return n
+}
+
+// ---------------- color ----------------
+
+export function setClipColor(id: string, grade: ColorGrade | undefined, key?: string): void {
+  commit((d) => {
+    const c = d.clips.find((x) => x.id === id)
+    if (c) c.color = grade ? JSON.parse(JSON.stringify(grade)) : undefined
+  }, key)
+}
+
+/** Copy one clip's color to every other video/photo clip. Returns how many clips changed. */
+export function applyColorToAll(id: string): number {
+  const p = get().project
+  const src = p?.clips.find((c) => c.id === id)
+  if (!p || !src) return 0
+  const { match: _m, ...grade } = src.color ?? { adjust: undefined }
+  void _m
+  let n = 0
+  commit((d) => {
+    for (const c of d.clips) {
+      if (c.id === src.id || c.text || c.adjustment) continue
+      const m = d.media.find((x) => x.id === c.mediaId)
+      if (!m || m.kind === 'audio') continue
+      c.color = grade.adjust ? JSON.parse(JSON.stringify(grade)) : undefined
+      n++
+    }
+  })
+  return n
+}
+
+export const ADJUSTMENT_DEFAULT_DURATION = 5
+
+export function addAdjustmentLayer(grade: ColorGrade, opts: { start?: number; duration?: number } = {}): void {
+  const { project, playhead } = get()
+  if (!project) return
+  const total = project.clips.reduce((a, c) => Math.max(a, clipEnd(c)), 0)
+  const start = Math.max(0, opts.start ?? playhead)
+  const dur = opts.duration ?? Math.max(1, Math.min(ADJUSTMENT_DEFAULT_DURATION, total - start || ADJUSTMENT_DEFAULT_DURATION))
+  const id = uid()
+  commit((d) => {
+    const main = mainTrack(d, 'video')
+    const own = d.tracks.find(
+      (t) =>
+        t.kind === 'video' &&
+        t.id !== main?.id &&
+        !t.locked &&
+        d.clips.some((c) => c.trackId === t.id) &&
+        d.clips.filter((c) => c.trackId === t.id).every((c) => !!c.adjustment) &&
+        !overlaps(d.clips as Clip[], t.id, start, start + dur)
+    ) as Track | undefined
+    const track = own ?? insertTrack(d, 'video')
+    d.clips.push({
+      id,
+      trackId: track.id,
+      mediaId: '',
+      adjustment: true,
+      color: JSON.parse(JSON.stringify(grade)),
+      start,
+      in: 0,
+      out: dur,
+      volume: 1,
+      transform: defaultTransform()
+    })
+  })
+  set({ selection: [id] })
 }
 
 export function updateClip(id: string, recipe: (c: Draft<Clip>) => void, key?: string): void {

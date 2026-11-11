@@ -7,6 +7,7 @@ import type { Clip, MediaItem } from '@shared/types'
 import { addClip, importPaths, removeMedia, useEditor } from '../store'
 import { formatShort, mediaUrl } from '../lib/util'
 import TextPanel from './TextPanel'
+import FiltersPanel from './FiltersPanel'
 
 const EMPTY_MEDIA: MediaItem[] = []
 const EMPTY_CLIPS: Clip[] = []
@@ -25,7 +26,6 @@ const TABS: { id: Tab; label: string; icon: React.ComponentType<{ size?: number 
 const COMING: Record<string, { phase: number; title: string; text: string }> = {
   effects: { phase: 4, title: 'Effects', text: 'Speed ramps, keyframe animation and video effects.' },
   transitions: { phase: 4, title: 'Transitions', text: 'Fades, wipes, zooms and more between clips.' },
-  filters: { phase: 3, title: 'Filters & color', text: 'Color correction, LUTs, filter presets and one-click auto color.' }
 }
 
 export default function MediaPanel(): React.JSX.Element {
@@ -44,6 +44,7 @@ export default function MediaPanel(): React.JSX.Element {
         {tab === 'media' && <Library filter={(m) => m.kind !== 'audio'} title="Media" />}
         {tab === 'audio' && <Library filter={(m) => m.kind === 'audio'} title="Audio" />}
         {tab === 'text' && <TextPanel />}
+        {tab === 'filters' && <FiltersPanel />}
         {COMING[tab] && (
           <div className="soon">
             <span className="pill">Phase {COMING[tab].phase}</span>

@@ -5,6 +5,8 @@ import { clipEnd, fitSize, projectDuration } from '@shared/types'
 import { useEditor } from '../store'
 import { mediaUrl } from '../lib/util'
 import { drawTextClip } from './text'
+import { gradeIsActive } from './color'
+import { colorProcessor } from './gl'
 
 interface ClipSource {
   el: HTMLVideoElement | HTMLAudioElement
@@ -206,6 +208,12 @@ class Player {
           drawTextClip(ctx, c, c.in + (t - c.start), p.width, p.height, 1)
           continue
         }
+        if (c.adjustment) {
+          // Adjustment layer: re-color everything drawn so far.
+          const proc = gradeIsActive(c.color) ? colorProcessor() : null
+          if (proc && this.canvas) ctx.drawImage(proc.process(this.canvas, p.width, p.height, c.color!), 0, 0, p.width, p.height)
+          continue
+        }
         const m = this.mediaOf(p, c)
         if (!m || m.kind === 'audio') continue
         let src: CanvasImageSource | null = null
@@ -221,6 +229,13 @@ class Player {
         const fit = fitSize(m.width, m.height, p.width, p.height)
         const w = fit.w * tr.scale
         const h = fit.h * tr.scale
+        if (gradeIsActive(c.color)) {
+          const proc = colorProcessor()
+          // Process at most at the size it is drawn (cheaper), never larger than the source.
+          const pw = Math.min(m.width || w, w, 2560)
+          const ph = pw * (h / w)
+          if (proc) src = proc.process(src, pw, ph, c.color!)
+        }
         ctx.save()
         ctx.globalAlpha = tr.opacity
         ctx.translate(p.width / 2 + tr.x, p.height / 2 + tr.y)

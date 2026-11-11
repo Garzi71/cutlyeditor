@@ -7,7 +7,7 @@ import { Readable } from 'stream'
 import type { ExportSettings, Project, RecentProject, TranscribeOptions } from '../shared/types'
 import { cancelExport, newTempDir, startExport, writeTempFile } from './exporter'
 import { whisperCancel, whisperDownload, whisperStatus, whisperTranscribe } from './whisper'
-import { makePeaks, makeThumbnails, probe, systemInfo } from './ffmpeg'
+import { makePeaks, makeThumbnails, probe, sampleFrames, systemInfo } from './ffmpeg'
 import { initUpdater, installingUpdate } from './updater'
 
 // Developer aid: `CUTLY_DEBUG_PORT=9222 npm run dev` allows inspecting the UI from outside.
@@ -191,6 +191,22 @@ function registerIpc(): void {
   ipcMain.handle('export:cancel', () => cancelExport())
 
   ipcMain.handle('shell:showItem', (_e, p: string) => shell.showItemInFolder(p))
+
+  // ---- color ----
+  ipcMain.handle('media:samples', (_e, file: string, times: number[], w: number, h: number) => sampleFrames(file, times, w, h))
+  ipcMain.handle('file:readText', async (_e, file: string) => {
+    const stat = await fs.stat(file)
+    if (stat.size > 64 * 1024 * 1024) throw new Error('File is too large')
+    return fs.readFile(file, 'utf8')
+  })
+  ipcMain.handle('dialog:openLut', async () => {
+    const r = await dialog.showOpenDialog(win!, {
+      title: 'Import LUT',
+      properties: ['openFile'],
+      filters: [{ name: '3D LUT', extensions: ['cube'] }]
+    })
+    return r.canceled ? null : r.filePaths[0]
+  })
 
   // ---- text frames for export ----
   ipcMain.handle('export:newTemp', () => newTempDir())

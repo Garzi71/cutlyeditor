@@ -7,6 +7,7 @@ import { commit, defaultTransform, updateClip, useEditor } from '../store'
 import { ASPECTS, RESOLUTIONS, aspectIdOf, formatBytes, formatTimecode, frameSize } from '../lib/util'
 import { NumberField, SliderField } from './Controls'
 import TextInspector from './TextInspector'
+import ColorInspector from './ColorInspector'
 
 export default function Inspector(): React.JSX.Element {
   const project = useEditor((s) => s.project)!
@@ -18,6 +19,18 @@ export default function Inspector(): React.JSX.Element {
     <div className="panel">
       {clip?.text ? (
         <TextInspector key={clip.id} clip={clip} />
+      ) : clip?.adjustment ? (
+        <>
+          <div className="insp-tabs">
+            <button className="insp-tab active">Adjustment layer</button>
+          </div>
+          <div className="panel-body">
+            <p className="hint" style={{ margin: '12px 14px 0', lineHeight: 1.5 }}>
+              Colors everything below it on the timeline while it plays. Stretch it on the timeline to cover more.
+            </p>
+            <ColorInspector key={clip.id} clip={clip} />
+          </div>
+        </>
       ) : clip && media ? (
         <ClipInspector key={clip.id} project={project} clip={clip} media={media} />
       ) : selection.length > 1 ? (
@@ -32,12 +45,18 @@ export default function Inspector(): React.JSX.Element {
   )
 }
 
-type Tab = 'video' | 'audio' | 'info'
+type Tab = 'video' | 'color' | 'audio' | 'info'
+let lastTab: Tab = 'video' // remembered when switching between clips
 
 function ClipInspector({ project, clip, media }: { project: Project; clip: Clip; media: MediaItem }): React.JSX.Element {
   const visual = media.kind !== 'audio'
   const hasSound = media.kind === 'audio' || media.hasAudio
-  const [tab, setTab] = useState<Tab>(visual ? 'video' : 'audio')
+  const allowed: Tab[] = [...(visual ? (['video', 'color'] as Tab[]) : []), ...(hasSound ? (['audio'] as Tab[]) : []), 'info']
+  const [tab, setTabState] = useState<Tab>(allowed.includes(lastTab) ? lastTab : allowed[0])
+  const setTab = (t: Tab): void => {
+    lastTab = t
+    setTabState(t)
+  }
   const tr = clip.transform
   const set = (field: keyof Clip['transform'], v: number): void =>
     updateClip(clip.id, (c) => {
@@ -52,6 +71,11 @@ function ClipInspector({ project, clip, media }: { project: Project; clip: Clip;
             Video
           </button>
         )}
+        {visual && (
+          <button className={`insp-tab ${tab === 'color' ? 'active' : ''}`} onClick={() => setTab('color')}>
+            Color
+          </button>
+        )}
         {hasSound && (
           <button className={`insp-tab ${tab === 'audio' ? 'active' : ''}`} onClick={() => setTab('audio')}>
             Audio
@@ -62,6 +86,7 @@ function ClipInspector({ project, clip, media }: { project: Project; clip: Clip;
         </button>
       </div>
       <div className="panel-body">
+        {tab === 'color' && visual && <ColorInspector clip={clip} />}
         {tab === 'video' && visual && (
           <div className="section">
             <div className="section-title">
